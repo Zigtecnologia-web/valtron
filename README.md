@@ -4,6 +4,16 @@ Valtron e uma ferramenta desktop de analise local de dados tabulares: um mini da
 
 Ele foi desenhado para ingerir arquivos gigantescos em poucos segundos, persistindo os dados localmente em DuckDB e mantendo a interface leve por meio de paginacao, filtros, ordenacao e consultas SQL somente leitura.
 
+## Interface
+
+Visualizacao principal com a grid de dados importados:
+
+![Interface principal do Valtron](docs/images/valtron-interface-compacta.png)
+
+Visualizacao com o painel de workspaces e documentos aberto:
+
+![Interface do Valtron com workspace aberto](docs/images/valtron-interface-workspace.png)
+
 ## Documentacao
 
 - [Documentacao tecnica do projeto](docs/PROJETO.md)
