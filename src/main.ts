@@ -1,5 +1,13 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import {
+  checkForUpdates,
+  downloadAndInstallUpdate,
+  getInstalledVersion,
+  installUpdate,
+  type UpdateInfo,
+  type UpdateProgress,
+} from "./services/updater/updater.service";
 import "./styles.css";
 
 type ImportSummary = {
@@ -138,6 +146,9 @@ let exportDocumentId: string | null = null;
 let exportInProgress = false;
 let deleteDocumentId: string | null = null;
 let resolveDeleteConfirmation: ((confirmed: boolean) => void) | null = null;
+let installedVersion = "";
+let pendingUpdateInfo: UpdateInfo | null = null;
+let updateInProgress = false;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -278,6 +289,61 @@ app.innerHTML = `
       </section>
     </div>
 
+    <div id="update-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="update-title">
+      <section class="modal-panel update-panel">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Atualizacao</p>
+            <h2 id="update-title">Nova versao disponivel</h2>
+          </div>
+          <button id="close-update-x" class="icon-button modal-close" type="button" aria-label="Atualizar depois">×</button>
+        </div>
+        <div class="update-content">
+          <p id="update-version" class="update-version">Valtron</p>
+          <p id="update-message" class="confirm-message">Uma nova versao do Valtron esta disponivel.</p>
+          <div id="update-notes-shell" class="update-notes hidden">
+            <p class="toolbar-title">Novidades</p>
+            <div id="update-notes"></div>
+          </div>
+          <div id="update-progress" class="update-progress hidden" role="status" aria-live="polite">
+            <div class="update-progress-header">
+              <span id="update-progress-label">Baixando atualizacao</span>
+              <strong id="update-progress-percent">0%</strong>
+            </div>
+            <div class="update-progress-track">
+              <span id="update-progress-bar"></span>
+            </div>
+            <p>Nao feche o Valtron durante a atualizacao.</p>
+          </div>
+          <p id="update-error" class="update-error hidden"></p>
+        </div>
+        <div class="modal-actions">
+          <button id="skip-update" class="ghost-button" type="button">Depois</button>
+          <button id="install-update" class="primary-button" type="button">Atualizar agora</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="about-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <section class="modal-panel about-panel">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Sobre</p>
+            <h2 id="about-title">Valtron</h2>
+          </div>
+          <button id="close-about-x" class="icon-button modal-close" type="button" aria-label="Fechar sobre">×</button>
+        </div>
+        <div class="about-content">
+          <p id="about-version" class="confirm-message">Versao carregando...</p>
+          <p id="manual-update-status" class="toolbar-subtitle">Atualizacoes automaticas ficam ativas na versao instalada.</p>
+        </div>
+        <div class="modal-actions">
+          <button id="manual-update-check" class="ghost-button" type="button">Verificar atualizacoes</button>
+          <button id="close-about" class="primary-button" type="button">Fechar</button>
+        </div>
+      </section>
+    </div>
+
     <section class="content-shell">
       <header class="topbar">
         <div>
@@ -287,6 +353,7 @@ app.innerHTML = `
         <div class="topbar-actions">
           <button id="toggle-grid-details" class="ghost-button" type="button">Detalhes</button>
           <button id="toggle-sql" class="ghost-button" type="button">Console SQL</button>
+          <button id="open-about" class="ghost-button" type="button">Sobre</button>
           <button id="import-button" class="primary-button" type="button">
             <svg class="button-icon" aria-hidden="true" viewBox="0 0 24 24">
               <path d="M12 3v10m0 0 4-4m-4 4-4-4"></path>
@@ -434,6 +501,26 @@ const deleteMessageEl = document.querySelector<HTMLParagraphElement>("#delete-me
 const cancelDeleteButton = document.querySelector<HTMLButtonElement>("#cancel-delete");
 const cancelDeleteXButton = document.querySelector<HTMLButtonElement>("#cancel-delete-x");
 const confirmDeleteButton = document.querySelector<HTMLButtonElement>("#confirm-delete");
+const updateModalEl = document.querySelector<HTMLDivElement>("#update-modal");
+const closeUpdateXButton = document.querySelector<HTMLButtonElement>("#close-update-x");
+const updateVersionEl = document.querySelector<HTMLParagraphElement>("#update-version");
+const updateMessageEl = document.querySelector<HTMLParagraphElement>("#update-message");
+const updateNotesShellEl = document.querySelector<HTMLDivElement>("#update-notes-shell");
+const updateNotesEl = document.querySelector<HTMLDivElement>("#update-notes");
+const updateProgressEl = document.querySelector<HTMLDivElement>("#update-progress");
+const updateProgressLabelEl = document.querySelector<HTMLSpanElement>("#update-progress-label");
+const updateProgressPercentEl = document.querySelector<HTMLElement>("#update-progress-percent");
+const updateProgressBarEl = document.querySelector<HTMLSpanElement>("#update-progress-bar");
+const updateErrorEl = document.querySelector<HTMLParagraphElement>("#update-error");
+const skipUpdateButton = document.querySelector<HTMLButtonElement>("#skip-update");
+const installUpdateButton = document.querySelector<HTMLButtonElement>("#install-update");
+const openAboutButton = document.querySelector<HTMLButtonElement>("#open-about");
+const aboutModalEl = document.querySelector<HTMLDivElement>("#about-modal");
+const closeAboutXButton = document.querySelector<HTMLButtonElement>("#close-about-x");
+const closeAboutButton = document.querySelector<HTMLButtonElement>("#close-about");
+const aboutVersionEl = document.querySelector<HTMLParagraphElement>("#about-version");
+const manualUpdateStatusEl = document.querySelector<HTMLParagraphElement>("#manual-update-status");
+const manualUpdateCheckButton = document.querySelector<HTMLButtonElement>("#manual-update-check");
 const toggleGridDetailsButton = document.querySelector<HTMLButtonElement>("#toggle-grid-details");
 const closeGridDetailsButton = document.querySelector<HTMLButtonElement>("#close-grid-details");
 const gridDetailsPanelEl = document.querySelector<HTMLElement>("#grid-details-panel");
@@ -464,6 +551,183 @@ const clearFiltersButton = document.querySelector<HTMLButtonElement>("#clear-fil
 function setStatus(message: string) {
   if (statusEl) {
     statusEl.textContent = message;
+  }
+}
+
+function setManualUpdateStatus(message: string) {
+  if (manualUpdateStatusEl) {
+    manualUpdateStatusEl.textContent = message;
+  }
+}
+
+function renderInstalledVersion() {
+  const versionText = installedVersion ? `Versao ${installedVersion}` : "Versao carregando...";
+
+  if (aboutVersionEl) {
+    aboutVersionEl.textContent = versionText;
+  }
+}
+
+function formatUpdateNotes(body: string | null) {
+  const notes = (body ?? "").trim();
+
+  if (!notes) {
+    return "";
+  }
+
+  const lines = notes
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return lines.map((line) => `<p>${escapeHtml(line.replace(/^[-*]\s*/, ""))}</p>`).join("");
+}
+
+function renderUpdateModal(update: UpdateInfo) {
+  pendingUpdateInfo = update;
+
+  if (updateVersionEl) {
+    updateVersionEl.textContent = `Valtron ${update.version}`;
+  }
+
+  if (updateMessageEl) {
+    updateMessageEl.textContent = `Voce esta usando a versao ${update.currentVersion}. Uma nova versao esta disponivel.`;
+  }
+
+  const notesHtml = formatUpdateNotes(update.body);
+  updateNotesShellEl?.classList.toggle("hidden", !notesHtml);
+
+  if (updateNotesEl) {
+    updateNotesEl.innerHTML = notesHtml;
+  }
+
+  setUpdateProgress(null);
+  setUpdateError("");
+  setUpdateInProgress(false);
+  updateModalEl?.classList.remove("hidden");
+}
+
+function closeUpdateModal() {
+  if (updateInProgress) {
+    return;
+  }
+
+  updateModalEl?.classList.add("hidden");
+}
+
+function openAboutModal() {
+  renderInstalledVersion();
+  setManualUpdateStatus("Atualizacoes automaticas ficam ativas na versao instalada.");
+  aboutModalEl?.classList.remove("hidden");
+}
+
+function closeAboutModal() {
+  aboutModalEl?.classList.add("hidden");
+}
+
+function setUpdateError(message: string) {
+  if (!updateErrorEl) {
+    return;
+  }
+
+  updateErrorEl.textContent = message;
+  updateErrorEl.classList.toggle("hidden", !message);
+}
+
+function setUpdateInProgress(inProgress: boolean) {
+  updateInProgress = inProgress;
+
+  if (installUpdateButton) {
+    installUpdateButton.disabled = inProgress;
+    installUpdateButton.textContent = inProgress ? "Atualizando..." : "Atualizar agora";
+  }
+
+  if (skipUpdateButton) {
+    skipUpdateButton.disabled = inProgress;
+  }
+
+  if (closeUpdateXButton) {
+    closeUpdateXButton.disabled = inProgress;
+  }
+}
+
+function setUpdateProgress(progress: UpdateProgress | null) {
+  updateProgressEl?.classList.toggle("hidden", !progress);
+
+  const percent = progress?.percent ?? 0;
+
+  if (updateProgressPercentEl) {
+    updateProgressPercentEl.textContent = progress?.percent === null ? "--" : `${percent}%`;
+  }
+
+  if (updateProgressBarEl) {
+    updateProgressBarEl.style.width = `${percent}%`;
+  }
+
+  if (updateProgressLabelEl) {
+    updateProgressLabelEl.textContent = "Baixando atualizacao";
+  }
+}
+
+async function runUpdateCheck(mode: "auto" | "manual") {
+  if (mode === "manual") {
+    if (manualUpdateCheckButton) {
+      manualUpdateCheckButton.disabled = true;
+    }
+
+    setManualUpdateStatus("Verificando atualizacoes...");
+  }
+
+  try {
+    const result = await checkForUpdates();
+    installedVersion = result.available ? result.update.currentVersion : result.currentVersion;
+    renderInstalledVersion();
+
+    if (result.available) {
+      setManualUpdateStatus(`Nova versao disponivel: ${result.update.version}.`);
+      renderUpdateModal(result.update);
+      return;
+    }
+
+    if (mode === "manual") {
+      setManualUpdateStatus("Voce ja esta utilizando a versao mais recente.");
+    }
+  } catch (error) {
+    console.error("Falha ao verificar atualizacoes.", error);
+
+    if (mode === "manual") {
+      setManualUpdateStatus("Nao foi possivel verificar atualizacoes agora.");
+    }
+  } finally {
+    if (mode === "manual" && manualUpdateCheckButton) {
+      manualUpdateCheckButton.disabled = false;
+    }
+  }
+}
+
+async function updateNow() {
+  if (!pendingUpdateInfo || updateInProgress) {
+    return;
+  }
+
+  setUpdateInProgress(true);
+  setUpdateError("");
+  setUpdateProgress({ downloadedBytes: 0, contentLength: null, percent: 0 });
+
+  try {
+    await downloadAndInstallUpdate(setUpdateProgress);
+
+    if (updateProgressLabelEl) {
+      updateProgressLabelEl.textContent = "Atualizacao instalada";
+    }
+
+    await installUpdate();
+  } catch (error) {
+    console.error("Falha ao instalar atualizacao.", error);
+    setUpdateError(
+      "Nao foi possivel atualizar o Valtron. Voce pode continuar utilizando esta versao e tentar novamente mais tarde.",
+    );
+    setUpdateInProgress(false);
   }
 }
 
@@ -1768,6 +2032,16 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.key === "Escape" && !aboutModalEl?.classList.contains("hidden")) {
+    closeAboutModal();
+    return;
+  }
+
+  if (event.key === "Escape" && !updateModalEl?.classList.contains("hidden")) {
+    closeUpdateModal();
+    return;
+  }
+
   if (event.key === "Escape" && openDocumentMenuId) {
     setOpenDocumentMenu(null);
     return;
@@ -1831,6 +2105,30 @@ deleteModalEl?.addEventListener("click", (event) => {
 cancelDeleteButton?.addEventListener("click", () => closeDeleteModal(false));
 cancelDeleteXButton?.addEventListener("click", () => closeDeleteModal(false));
 confirmDeleteButton?.addEventListener("click", () => closeDeleteModal(true));
+
+updateModalEl?.addEventListener("click", (event) => {
+  if (event.target === updateModalEl) {
+    closeUpdateModal();
+  }
+});
+
+closeUpdateXButton?.addEventListener("click", closeUpdateModal);
+skipUpdateButton?.addEventListener("click", closeUpdateModal);
+installUpdateButton?.addEventListener("click", updateNow);
+
+openAboutButton?.addEventListener("click", openAboutModal);
+
+aboutModalEl?.addEventListener("click", (event) => {
+  if (event.target === aboutModalEl) {
+    closeAboutModal();
+  }
+});
+
+closeAboutXButton?.addEventListener("click", closeAboutModal);
+closeAboutButton?.addEventListener("click", closeAboutModal);
+manualUpdateCheckButton?.addEventListener("click", () => {
+  runUpdateCheck("manual");
+});
 
 workspaceSelectEl?.addEventListener("change", async () => {
   await selectWorkspace(workspaceSelectEl.value);
@@ -2012,6 +2310,17 @@ renderGridDetailsVisibility();
 renderQuality(null);
 renderTable(null);
 syncSqlHighlight();
+getInstalledVersion()
+  .then((version) => {
+    installedVersion = version;
+    renderInstalledVersion();
+  })
+  .catch((error) => {
+    console.error("Falha ao obter versao instalada.", error);
+  });
+window.setTimeout(() => {
+  runUpdateCheck("auto");
+}, 1200);
 refreshWorkspaces()
   .then(refreshDocuments)
   .then(() => {

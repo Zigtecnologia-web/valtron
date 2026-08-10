@@ -1,0 +1,52 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--bundles app,dmg"
+          - platform: windows-latest
+            args: "--bundles nsis,msi"
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Publicar build Tauri
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Valtron ${{ github.ref_name }}"
+          releaseBody: "Veja os arquivos desta versao para baixar e instalar o Valtron."
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

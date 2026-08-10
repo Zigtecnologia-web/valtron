@@ -2664,12 +2664,7 @@ fn write_xlsx_zip_entry(
         .map_err(|error| format!("Nao foi possivel escrever a entrada XLSX {name}: {error}"))
 }
 
-fn write_xlsx_text_cell(
-    sheet: &mut String,
-    row_number: usize,
-    column_index: usize,
-    value: &str,
-) {
+fn write_xlsx_text_cell(sheet: &mut String, row_number: usize, column_index: usize, value: &str) {
     let reference = format!("{}{}", xlsx_column_name(column_index), row_number);
     sheet.push_str("<c r=\"");
     sheet.push_str(&reference);
@@ -2875,6 +2870,8 @@ fn get_sql_page(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_workspaces,
