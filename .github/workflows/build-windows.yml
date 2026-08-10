@@ -1,0 +1,36 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Compilar Valtron para Windows
+        run: npm run tauri:build -- --bundles nsis,msi
+
+      - name: Salvar executáveis
+        uses: actions/upload-artifact@v4
+        with:
+          name: valtron-windows
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
