@@ -804,6 +804,12 @@ button:disabled {
   max-width: min(460px, 100%);
 }
 
+.columns-panel {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  margin-top: min(10vh, 80px);
+  max-width: min(560px, 100%);
+}
+
 .update-panel,
 .about-panel {
   grid-template-rows: auto auto auto;
@@ -907,9 +913,11 @@ button:disabled {
 }
 
 .update-content,
-.about-content {
+.about-content,
+.columns-content {
   display: grid;
   gap: 14px;
+  min-height: 0;
 }
 
 .update-version {
@@ -1024,6 +1032,49 @@ button:disabled {
   color: #f8fafc;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.columns-list {
+  border: 1px solid #273449;
+  border-radius: 8px;
+  display: grid;
+  max-height: min(420px, 58vh);
+  min-height: 180px;
+  overflow-y: auto;
+}
+
+.column-option {
+  align-items: center;
+  background: #111827;
+  border-bottom: 1px solid #1f2a3d;
+  color: #dbeafe;
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.column-option:last-child {
+  border-bottom: 0;
+}
+
+.column-option:hover {
+  background: #13233d;
+}
+
+.column-option input {
+  accent-color: #38bdf8;
+  height: 16px;
+  margin: 0;
+  width: 16px;
+}
+
+.column-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .loading-panel {

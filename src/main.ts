@@ -118,6 +118,7 @@ type CellPosition = {
 type ExportFormat = "csv" | "tsv" | "xlsx";
 
 const PAGE_SIZE = 100;
+const COLUMN_VISIBILITY_STORAGE_PREFIX = "valtron.columnVisibility.v1";
 
 let currentOffset = 0;
 let currentPage: TablePage | null = null;
@@ -149,6 +150,7 @@ let resolveDeleteConfirmation: ((confirmed: boolean) => void) | null = null;
 let installedVersion = "";
 let pendingUpdateInfo: UpdateInfo | null = null;
 let updateInProgress = false;
+let columnSettingsOpen = false;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -285,6 +287,26 @@ app.innerHTML = `
         <div class="modal-actions">
           <button id="cancel-delete" class="ghost-button" type="button">Cancelar</button>
           <button id="confirm-delete" class="danger-button" type="button">Excluir</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="columns-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="columns-title">
+      <section class="modal-panel columns-panel">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Grid</p>
+            <h2 id="columns-title">Colunas</h2>
+          </div>
+          <button id="close-columns-x" class="icon-button modal-close" type="button" aria-label="Fechar colunas">×</button>
+        </div>
+        <div class="columns-content">
+          <p id="columns-subtitle" class="toolbar-subtitle">Selecione as colunas visiveis neste documento.</p>
+          <div id="columns-list" class="columns-list"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="show-all-columns" class="ghost-button" type="button">Mostrar todas</button>
+          <button id="close-columns" class="primary-button" type="button">Fechar</button>
         </div>
       </section>
     </div>
@@ -446,6 +468,7 @@ app.innerHTML = `
         </div>
         <div class="pager">
           <button id="clear-filters" class="ghost-button" type="button" disabled>Limpar filtros</button>
+          <button id="open-columns" class="ghost-button" type="button" disabled>Colunas</button>
           <button id="prev-page" class="ghost-button" type="button" disabled>Anterior</button>
           <button id="next-page" class="ghost-button" type="button" disabled>Proxima</button>
         </div>
@@ -501,6 +524,12 @@ const deleteMessageEl = document.querySelector<HTMLParagraphElement>("#delete-me
 const cancelDeleteButton = document.querySelector<HTMLButtonElement>("#cancel-delete");
 const cancelDeleteXButton = document.querySelector<HTMLButtonElement>("#cancel-delete-x");
 const confirmDeleteButton = document.querySelector<HTMLButtonElement>("#confirm-delete");
+const columnsModalEl = document.querySelector<HTMLDivElement>("#columns-modal");
+const columnsSubtitleEl = document.querySelector<HTMLParagraphElement>("#columns-subtitle");
+const columnsListEl = document.querySelector<HTMLDivElement>("#columns-list");
+const closeColumnsXButton = document.querySelector<HTMLButtonElement>("#close-columns-x");
+const closeColumnsButton = document.querySelector<HTMLButtonElement>("#close-columns");
+const showAllColumnsButton = document.querySelector<HTMLButtonElement>("#show-all-columns");
 const updateModalEl = document.querySelector<HTMLDivElement>("#update-modal");
 const closeUpdateXButton = document.querySelector<HTMLButtonElement>("#close-update-x");
 const updateVersionEl = document.querySelector<HTMLParagraphElement>("#update-version");
@@ -547,6 +576,7 @@ const tableBodyEl = document.querySelector<HTMLTableSectionElement>("#table-body
 const prevButton = document.querySelector<HTMLButtonElement>("#prev-page");
 const nextButton = document.querySelector<HTMLButtonElement>("#next-page");
 const clearFiltersButton = document.querySelector<HTMLButtonElement>("#clear-filters");
+const openColumnsButton = document.querySelector<HTMLButtonElement>("#open-columns");
 
 function setStatus(message: string) {
   if (statusEl) {
@@ -928,6 +958,57 @@ function activeFilters(): ColumnFilter[] {
     .map(([column, value]) => ({ column, value: value.trim() }));
 }
 
+function columnVisibilityStorageKey(documentId: string) {
+  return `${COLUMN_VISIBILITY_STORAGE_PREFIX}.${documentId}`;
+}
+
+function readHiddenColumns(documentId: string | null) {
+  if (!documentId) {
+    return new Set<string>();
+  }
+
+  try {
+    const parsed = JSON.parse(localStorage.getItem(columnVisibilityStorageKey(documentId)) ?? "[]");
+
+    if (!Array.isArray(parsed)) {
+      return new Set<string>();
+    }
+
+    return new Set(parsed.filter((column): column is string => typeof column === "string"));
+  } catch (error) {
+    console.error("Falha ao ler configuracao de colunas.", error);
+    return new Set<string>();
+  }
+}
+
+function writeHiddenColumns(documentId: string, hiddenColumns: Set<string>) {
+  const key = columnVisibilityStorageKey(documentId);
+
+  if (hiddenColumns.size === 0) {
+    localStorage.removeItem(key);
+    return;
+  }
+
+  localStorage.setItem(key, JSON.stringify(Array.from(hiddenColumns)));
+}
+
+function hiddenColumnsForCurrentGrid() {
+  return dataMode === "document" ? readHiddenColumns(currentDocumentId) : new Set<string>();
+}
+
+function visibleColumnEntries(page: TablePage) {
+  const hiddenColumns = hiddenColumnsForCurrentGrid();
+  const entries = page.columns
+    .map((column, index) => ({ column, index }))
+    .filter(({ column }) => !hiddenColumns.has(column));
+
+  return entries.length > 0 ? entries : page.columns.map((column, index) => ({ column, index }));
+}
+
+function visibleColumnCount(page: TablePage | null = currentPage) {
+  return page ? visibleColumnEntries(page).length : 0;
+}
+
 function filterValue(column: string) {
   return filterValues.get(column) ?? "";
 }
@@ -1276,6 +1357,110 @@ function confirmDeleteDocument(documentId: string) {
   });
 }
 
+function renderColumnsModal() {
+  if (!columnsModalEl || !columnsListEl || !columnsSubtitleEl) {
+    return;
+  }
+
+  if (!columnSettingsOpen || !currentPage || dataMode !== "document" || !currentDocumentId) {
+    columnsModalEl.classList.add("hidden");
+    columnsListEl.innerHTML = "";
+    return;
+  }
+
+  const hiddenColumns = readHiddenColumns(currentDocumentId);
+  const visibleCount = visibleColumnCount(currentPage);
+
+  columnsSubtitleEl.textContent = `${formatNumber(visibleCount)} de ${formatNumber(
+    currentPage.columns.length,
+  )} colunas visiveis neste documento.`;
+  columnsListEl.innerHTML = currentPage.columns
+    .map(
+      (column) => `
+        <label class="column-option" title="${escapeHtml(column)}">
+          <input
+            type="checkbox"
+            data-column-visibility="${escapeHtml(column)}"
+            ${hiddenColumns.has(column) ? "" : "checked"}
+          />
+          <span>${escapeHtml(column)}</span>
+        </label>
+      `,
+    )
+    .join("");
+
+  columnsModalEl.classList.remove("hidden");
+}
+
+function openColumnsModal() {
+  if (!currentPage || dataMode !== "document" || !currentDocumentId) {
+    setStatus("Selecione um documento para configurar as colunas.");
+    return;
+  }
+
+  columnSettingsOpen = true;
+  renderColumnsModal();
+}
+
+function closeColumnsModal() {
+  columnSettingsOpen = false;
+  renderColumnsModal();
+}
+
+async function setColumnVisible(column: string, visible: boolean) {
+  if (!currentDocumentId || !currentPage) {
+    return;
+  }
+
+  const hiddenColumns = readHiddenColumns(currentDocumentId);
+
+  if (visible) {
+    hiddenColumns.delete(column);
+  } else {
+    const currentlyVisibleCount = currentPage.columns.filter((item) => !hiddenColumns.has(item)).length;
+
+    if (currentlyVisibleCount <= 1 && !hiddenColumns.has(column)) {
+      setStatus("Mantenha pelo menos uma coluna visivel.");
+      renderColumnsModal();
+      return;
+    }
+
+    const hadActiveFilter = filterValue(column).trim().length > 0;
+    const hadActiveSort = sortColumn === column;
+    hiddenColumns.add(column);
+    filterValues.delete(column);
+
+    if (hadActiveSort) {
+      sortColumn = null;
+      sortDirection = null;
+    }
+
+    writeHiddenColumns(currentDocumentId, hiddenColumns);
+
+    if (hadActiveFilter || hadActiveSort) {
+      await loadPage(0);
+      return;
+    }
+  }
+
+  writeHiddenColumns(currentDocumentId, hiddenColumns);
+
+  renderSummary(currentSummary, currentPage);
+  renderTable(currentPage);
+  renderColumnsModal();
+}
+
+async function showAllColumns() {
+  if (!currentDocumentId || !currentPage) {
+    return;
+  }
+
+  writeHiddenColumns(currentDocumentId, new Set());
+  renderSummary(currentSummary, currentPage);
+  renderTable(currentPage);
+  renderColumnsModal();
+}
+
 function captureFilterFocus(): FilterFocusState | null {
   const activeElement = document.activeElement;
 
@@ -1361,7 +1546,7 @@ function restorePendingCellFocus() {
 
   const target = {
     row: Math.min(pendingCellFocus.row, currentPage.rows.length - 1),
-    column: Math.min(pendingCellFocus.column, currentPage.columns.length - 1),
+    column: Math.min(pendingCellFocus.column, visibleColumnCount(currentPage) - 1),
   };
 
   pendingCellFocus = null;
@@ -1369,7 +1554,9 @@ function restorePendingCellFocus() {
 }
 
 async function moveCellFocus(position: CellPosition, direction: "next-column" | "previous-column" | "next-row" | "previous-row") {
-  if (!currentPage || currentPage.columns.length === 0 || currentPage.rows.length === 0) {
+  const columnCount = visibleColumnCount();
+
+  if (!currentPage || columnCount === 0 || currentPage.rows.length === 0) {
     return;
   }
 
@@ -1379,7 +1566,7 @@ async function moveCellFocus(position: CellPosition, direction: "next-column" | 
   if (direction === "next-column") {
     nextColumn += 1;
 
-    if (nextColumn >= currentPage.columns.length) {
+    if (nextColumn >= columnCount) {
       nextColumn = 0;
       nextRow += 1;
     }
@@ -1389,7 +1576,7 @@ async function moveCellFocus(position: CellPosition, direction: "next-column" | 
     nextColumn -= 1;
 
     if (nextColumn < 0) {
-      nextColumn = currentPage.columns.length - 1;
+      nextColumn = columnCount - 1;
       nextRow -= 1;
     }
   }
@@ -1595,18 +1782,21 @@ function renderTable(page: TablePage | null) {
     `;
     tableSubtitleEl.textContent = "Aguardando importacao.";
     pageRangeEl.textContent = "-";
+    if (openColumnsButton) openColumnsButton.disabled = true;
     renderQuality(null);
+    renderColumnsModal();
     return;
   }
 
   const firstRow = page.total_rows === 0 ? 0 : page.offset + 1;
   const lastRow = Math.min(page.offset + page.rows.length, page.total_rows);
+  const visibleColumns = visibleColumnEntries(page);
 
   tableHeadEl.innerHTML = `
     <tr>
-      ${page.columns
+      ${visibleColumns
         .map(
-          (column) => `
+          ({ column }) => `
             <th>
               <button class="column-sort" type="button" data-sort-column="${escapeHtml(column)}">
                 <span>${escapeHtml(column)}</span>
@@ -1618,9 +1808,9 @@ function renderTable(page: TablePage | null) {
         .join("")}
     </tr>
     <tr class="filter-row">
-      ${page.columns
+      ${visibleColumns
         .map(
-          (column) => `
+          ({ column }) => `
             <th>
               <input
                 class="column-filter"
@@ -1638,21 +1828,21 @@ function renderTable(page: TablePage | null) {
     page.rows.length === 0
       ? `
         <tr>
-          <td class="empty-cell" colspan="${page.columns.length}">Nenhuma linha encontrada.</td>
+          <td class="empty-cell" colspan="${visibleColumns.length}">Nenhuma linha encontrada.</td>
         </tr>
       `
       : page.rows
           .map(
             (row, rowIndex) => `
               <tr>
-                ${page.columns
+                ${visibleColumns
                   .map(
-                    (_, index) => `
+                    ({ index }, visibleIndex) => `
                       <td
                         class="data-cell"
                         tabindex="0"
                         data-cell-row="${rowIndex}"
-                        data-cell-column="${index}"
+                        data-cell-column="${visibleIndex}"
                       >${escapeHtml(row[index] ?? "")}</td>
                     `,
                   )
@@ -1674,8 +1864,10 @@ function renderTable(page: TablePage | null) {
   if (prevButton) prevButton.disabled = page.offset === 0;
   if (nextButton) nextButton.disabled = page.offset + page.limit >= page.total_rows;
   if (clearFiltersButton) clearFiltersButton.disabled = activeFilters().length === 0 && !sortColumn;
+  if (openColumnsButton) openColumnsButton.disabled = dataMode !== "document" || !currentDocumentId;
 
   renderQuality(page.stats);
+  renderColumnsModal();
   restoreFilterFocus(filterFocus);
   restorePendingCellFocus();
 }
@@ -1905,6 +2097,7 @@ async function removeDocument(documentId: string) {
 
   setStatus("Deletando documento...");
   await invoke("delete_document", { documentId });
+  localStorage.removeItem(columnVisibilityStorageKey(documentId));
 
   if (currentDocumentId === documentId) {
     currentDocumentId = null;
@@ -2032,6 +2225,11 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.key === "Escape" && columnSettingsOpen) {
+    closeColumnsModal();
+    return;
+  }
+
   if (event.key === "Escape" && !aboutModalEl?.classList.contains("hidden")) {
     closeAboutModal();
     return;
@@ -2105,6 +2303,30 @@ deleteModalEl?.addEventListener("click", (event) => {
 cancelDeleteButton?.addEventListener("click", () => closeDeleteModal(false));
 cancelDeleteXButton?.addEventListener("click", () => closeDeleteModal(false));
 confirmDeleteButton?.addEventListener("click", () => closeDeleteModal(true));
+
+columnsModalEl?.addEventListener("click", (event) => {
+  if (event.target === columnsModalEl) {
+    closeColumnsModal();
+  }
+});
+
+closeColumnsXButton?.addEventListener("click", closeColumnsModal);
+closeColumnsButton?.addEventListener("click", closeColumnsModal);
+showAllColumnsButton?.addEventListener("click", () => {
+  showAllColumns().catch((error) => setStatus(String(error)));
+});
+
+columnsListEl?.addEventListener("change", (event) => {
+  const target = event.target as HTMLInputElement;
+
+  if (!target.matches("[data-column-visibility]")) {
+    return;
+  }
+
+  setColumnVisible(target.dataset.columnVisibility ?? "", target.checked).catch((error) =>
+    setStatus(String(error)),
+  );
+});
 
 updateModalEl?.addEventListener("click", (event) => {
   if (event.target === updateModalEl) {
@@ -2302,6 +2524,8 @@ clearFiltersButton?.addEventListener("click", async () => {
   sortDirection = null;
   await loadPage(0);
 });
+
+openColumnsButton?.addEventListener("click", openColumnsModal);
 
 renderSummary(null);
 renderSidebarState();
