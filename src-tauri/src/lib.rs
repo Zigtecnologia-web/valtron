@@ -2652,6 +2652,50 @@ fn rename_document(
         .map_err(|error| format!("Nao foi possivel recarregar o documento: {error}"))
 }
 
+#[tauri::command]
+fn rename_document_column(
+    app: AppHandle,
+    document_id: String,
+    column_index: usize,
+    new_column: String,
+) -> Result<Vec<String>, String> {
+    let new_column = new_column.trim();
+
+    if new_column.is_empty() {
+        return Err("Digite um nome para a coluna.".to_string());
+    }
+
+    let connection = open_database(&app)?;
+    let table_name = get_document_table(&connection, &document_id)?;
+    let columns = get_columns(&connection, &table_name)?;
+
+    let old_column = columns
+        .get(column_index)
+        .ok_or_else(|| "Coluna nao encontrada.".to_string())?;
+
+    if old_column == new_column {
+        return Ok(columns);
+    }
+
+    if columns.iter().any(|column| column == new_column) {
+        return Err("Ja existe uma coluna com esse nome.".to_string());
+    }
+
+    connection
+        .execute(
+            &format!(
+                "ALTER TABLE {} RENAME COLUMN {} TO {}",
+                table_sql(&table_name),
+                quoted_identifier(old_column),
+                quoted_identifier(new_column)
+            ),
+            [],
+        )
+        .map_err(|error| format!("Nao foi possivel renomear a coluna: {error}"))?;
+
+    get_columns(&connection, &table_name)
+}
+
 fn write_xlsx_zip_entry(
     zip: &mut ZipWriter<fs::File>,
     options: SimpleFileOptions,
@@ -2881,6 +2925,7 @@ pub fn run() {
             list_documents,
             delete_document,
             rename_document,
+            rename_document_column,
             export_document,
             get_table_page,
             get_sql_page

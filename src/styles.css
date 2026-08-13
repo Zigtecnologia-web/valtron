@@ -1259,6 +1259,13 @@ th {
   z-index: 2;
 }
 
+.column-header {
+  align-items: center;
+  display: flex;
+  min-height: 43px;
+  padding: 0 8px;
+}
+
 .column-sort {
   align-items: center;
   background: transparent;
@@ -1266,15 +1273,17 @@ th {
   color: inherit;
   cursor: pointer;
   display: flex;
+  flex: 1;
   gap: 8px;
   justify-content: space-between;
   min-height: 43px;
-  padding: 11px 12px;
+  min-width: 0;
+  padding: 11px 4px;
   text-align: left;
-  width: 100%;
 }
 
-.column-sort:hover {
+.column-sort:hover,
+.column-edit:hover {
   background: rgba(56, 189, 248, 0.08);
 }
 
@@ -1286,6 +1295,44 @@ th {
 .column-sort strong {
   color: #5eead4;
   min-width: 12px;
+}
+
+.column-edit-wrap {
+  display: inline-flex;
+  flex: 0 0 26px;
+  position: relative;
+}
+
+.column-edit {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #7dd3fc;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 26px;
+  font-size: 0.9rem;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  width: 26px;
+}
+
+.column-edit-tooltip {
+  left: 0;
+  max-width: 320px;
+  top: calc(100% + 8px);
+  transform: none;
+}
+
+.column-edit-wrap:hover .column-edit-tooltip,
+.column-edit-wrap:focus-within .column-edit-tooltip {
+  display: block;
+}
+
+.column-edit:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.3);
+  outline-offset: -2px;
 }
 
 .column-filter {

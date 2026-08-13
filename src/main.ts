@@ -143,6 +143,8 @@ let documentMenuPosition = { top: 0, left: 0 };
 let editingWorkspaceId: string | null = null;
 let detailsDocumentId: string | null = null;
 let renameDocumentId: string | null = null;
+let renameColumnName: string | null = null;
+let renameColumnIndex: number | null = null;
 let exportDocumentId: string | null = null;
 let exportInProgress = false;
 let deleteDocumentId: string | null = null;
@@ -233,6 +235,31 @@ app.innerHTML = `
           <div class="rename-field-row">
             <input id="rename-document-name" class="rename-input" autocomplete="off" />
             <button id="save-rename" class="icon-button rename-save" type="submit" aria-label="Salvar nome do documento" title="Salvar nome do documento">
+              <svg class="button-icon" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path>
+                <path d="M17 21v-8H7v8"></path>
+                <path d="M7 3v5h8"></path>
+              </svg>
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="rename-column-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="rename-column-title">
+      <section class="modal-panel rename-panel">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Renomear</p>
+            <h2 id="rename-column-title">Renomear coluna</h2>
+          </div>
+          <button id="cancel-rename-column-x" class="icon-button modal-close" type="button" aria-label="Cancelar renomeacao da coluna">×</button>
+        </div>
+        <form id="rename-column-form" class="rename-form">
+          <label for="rename-column-name">Nome da coluna</label>
+          <div class="rename-field-row">
+            <input id="rename-column-name" class="rename-input" autocomplete="off" />
+            <button id="save-rename-column" class="icon-button rename-save" type="submit" aria-label="Salvar nome da coluna" title="Salvar nome da coluna">
               <svg class="button-icon" aria-hidden="true" viewBox="0 0 24 24">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path>
                 <path d="M17 21v-8H7v8"></path>
@@ -511,6 +538,11 @@ const renameFormEl = document.querySelector<HTMLFormElement>("#rename-form");
 const renameDocumentNameEl = document.querySelector<HTMLInputElement>("#rename-document-name");
 const cancelRenameXButton = document.querySelector<HTMLButtonElement>("#cancel-rename-x");
 const saveRenameButton = document.querySelector<HTMLButtonElement>("#save-rename");
+const renameColumnModalEl = document.querySelector<HTMLDivElement>("#rename-column-modal");
+const renameColumnFormEl = document.querySelector<HTMLFormElement>("#rename-column-form");
+const renameColumnNameEl = document.querySelector<HTMLInputElement>("#rename-column-name");
+const cancelRenameColumnXButton = document.querySelector<HTMLButtonElement>("#cancel-rename-column-x");
+const saveRenameColumnButton = document.querySelector<HTMLButtonElement>("#save-rename-column");
 const exportModalEl = document.querySelector<HTMLDivElement>("#export-modal");
 const exportFormEl = document.querySelector<HTMLFormElement>("#export-form");
 const exportFormatEl = document.querySelector<HTMLSelectElement>("#export-format");
@@ -1013,6 +1045,53 @@ function filterValue(column: string) {
   return filterValues.get(column) ?? "";
 }
 
+function renameColumnInLocalState(oldColumn: string, newColumn: string) {
+  const activeFilter = filterValues.get(oldColumn);
+
+  if (activeFilter !== undefined) {
+    filterValues.delete(oldColumn);
+    filterValues.set(newColumn, activeFilter);
+  }
+
+  if (sortColumn === oldColumn) {
+    sortColumn = newColumn;
+  }
+
+  if (currentSummary) {
+    currentSummary = {
+      ...currentSummary,
+      columns: currentSummary.columns.map((column) => (column === oldColumn ? newColumn : column)),
+    };
+  }
+
+  if (currentPage) {
+    currentPage = {
+      ...currentPage,
+      columns: currentPage.columns.map((column) => (column === oldColumn ? newColumn : column)),
+      filters: currentPage.filters.map((filter) =>
+        filter.column === oldColumn ? { ...filter, column: newColumn } : filter,
+      ),
+      stats: {
+        ...currentPage.stats,
+        quality: currentPage.stats.quality.map((item) =>
+          item.column === oldColumn ? { ...item, column: newColumn } : item,
+        ),
+      },
+      sort_column: currentPage.sort_column === oldColumn ? newColumn : currentPage.sort_column,
+    };
+  }
+
+  if (currentDocumentId) {
+    const hiddenColumns = readHiddenColumns(currentDocumentId);
+
+    if (hiddenColumns.has(oldColumn)) {
+      hiddenColumns.delete(oldColumn);
+      hiddenColumns.add(newColumn);
+      writeHiddenColumns(currentDocumentId, hiddenColumns);
+    }
+  }
+}
+
 function sortIndicator(column: string) {
   if (sortColumn !== column) {
     return "";
@@ -1176,6 +1255,73 @@ function closeRename() {
   renameModalEl?.classList.add("hidden");
   if (renameDocumentNameEl) {
     renameDocumentNameEl.value = "";
+  }
+}
+
+function openRenameColumn(columnIndex: number) {
+  if (dataMode !== "document" || !currentDocumentId || !currentPage || !renameColumnModalEl || !renameColumnNameEl) {
+    setStatus("Selecione um documento para renomear colunas.");
+    return;
+  }
+
+  const column = currentPage.columns[columnIndex];
+
+  if (!column) {
+    setStatus("Coluna nao encontrada para renomear.");
+    return;
+  }
+
+  renameColumnName = column;
+  renameColumnIndex = columnIndex;
+  renameColumnNameEl.value = column;
+  renameColumnModalEl.classList.remove("hidden");
+  renameColumnNameEl.focus();
+  renameColumnNameEl.select();
+}
+
+function closeRenameColumn() {
+  renameColumnName = null;
+  renameColumnIndex = null;
+  renameColumnModalEl?.classList.add("hidden");
+  if (renameColumnNameEl) {
+    renameColumnNameEl.value = "";
+  }
+}
+
+async function saveRenameColumn() {
+  const columnIndex = renameColumnIndex;
+  const oldColumn = columnIndex === null ? null : currentPage?.columns[columnIndex] ?? renameColumnName;
+  const newColumn = renameColumnNameEl?.value.trim() ?? "";
+
+  if (!currentDocumentId || columnIndex === null || !oldColumn || !renameColumnNameEl || !saveRenameColumnButton) {
+    setStatus("Coluna nao encontrada para renomear.");
+    return;
+  }
+
+  if (!newColumn) {
+    setStatus("Digite um nome para a coluna.");
+    renameColumnNameEl.focus();
+    return;
+  }
+
+  saveRenameColumnButton.disabled = true;
+  setStatus("Renomeando coluna...");
+
+  try {
+    await invoke<string[]>("rename_document_column", {
+      documentId: currentDocumentId,
+      columnIndex,
+      newColumn,
+    });
+
+    renameColumnInLocalState(oldColumn, newColumn);
+    closeRenameColumn();
+    await loadPage(currentOffset);
+    setStatus("Coluna renomeada.");
+  } catch (error) {
+    setStatus(String(error));
+  } finally {
+    saveRenameColumnButton.disabled = false;
   }
 }
 
@@ -1796,12 +1942,22 @@ function renderTable(page: TablePage | null) {
     <tr>
       ${visibleColumns
         .map(
-          ({ column }) => `
+          ({ column, index }) => `
             <th>
-              <button class="column-sort" type="button" data-sort-column="${escapeHtml(column)}">
-                <span>${escapeHtml(column)}</span>
-                <strong>${sortIndicator(column)}</strong>
-              </button>
+              <div class="column-header">
+                ${
+                  dataMode === "document"
+                    ? `<span class="column-edit-wrap">
+                        <button class="column-edit" type="button" data-edit-column-index="${index}" aria-label="Alterar ${escapeHtml(column)}">&#9998;</button>
+                        <span class="document-tooltip column-edit-tooltip" role="tooltip">Alterar ${escapeHtml(column)}</span>
+                      </span>`
+                    : ""
+                }
+                <button class="column-sort" type="button" data-sort-column="${escapeHtml(column)}" title="${escapeHtml(column)}">
+                  <span>${escapeHtml(column)}</span>
+                  <strong>${sortIndicator(column)}</strong>
+                </button>
+              </div>
             </th>
           `,
         )
@@ -2255,6 +2411,11 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.key === "Escape" && renameColumnName) {
+    closeRenameColumn();
+    return;
+  }
+
   if (event.key === "Escape" && exportDocumentId) {
     closeExport();
   }
@@ -2279,6 +2440,19 @@ cancelRenameXButton?.addEventListener("click", closeRename);
 renameFormEl?.addEventListener("submit", async (event) => {
   event.preventDefault();
   await saveRename();
+});
+
+renameColumnModalEl?.addEventListener("click", (event) => {
+  if (event.target === renameColumnModalEl) {
+    closeRenameColumn();
+  }
+});
+
+cancelRenameColumnXButton?.addEventListener("click", closeRenameColumn);
+
+renameColumnFormEl?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await saveRenameColumn();
 });
 
 exportModalEl?.addEventListener("click", (event) => {
@@ -2430,6 +2604,18 @@ sqlQueryEl?.addEventListener("scroll", () => {
 
 tableHeadEl?.addEventListener("click", async (event) => {
   const target = event.target as HTMLElement;
+  const editButton = target.closest<HTMLButtonElement>("[data-edit-column-index]");
+
+  if (editButton) {
+    const columnIndex = Number(editButton.dataset.editColumnIndex);
+
+    if (Number.isInteger(columnIndex)) {
+      openRenameColumn(columnIndex);
+    }
+
+    return;
+  }
+
   const button = target.closest<HTMLButtonElement>("[data-sort-column]");
 
   if (!button) {
