@@ -376,6 +376,32 @@ struct TablePage {
     stats: TableStats,
 }
 
+#[derive(Serialize)]
+struct GridPerformance {
+    query_duckdb_ms: u128,
+    rust_processing_ms: u128,
+    total_ms: u128,
+    rows: usize,
+    offset: usize,
+    limit: usize,
+}
+
+#[derive(Serialize)]
+struct TableWindow {
+    columns: Vec<String>,
+    rows: Vec<Vec<String>>,
+    total_rows: usize,
+    offset: usize,
+    limit: usize,
+    has_more: bool,
+    next_offset: Option<usize>,
+    sort_column: Option<String>,
+    sort_direction: Option<String>,
+    filters: Vec<ColumnFilter>,
+    stats: TableStats,
+    performance: GridPerformance,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 struct ColumnFilter {
     column: String,
@@ -1374,6 +1400,150 @@ fn get_page_from_source(
         sort_direction: safe_sort_direction,
         filters: active_filters,
         stats,
+    })
+}
+
+fn empty_stats(column_count: usize) -> TableStats {
+    TableStats {
+        column_count,
+        columns_with_empty: 0,
+        empty_cells: 0,
+        quality: Vec::new(),
+    }
+}
+
+fn selected_columns(all_columns: &[String], requested_columns: &[String]) -> Vec<String> {
+    let selected = requested_columns
+        .iter()
+        .filter(|column| all_columns.iter().any(|item| item == *column))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if selected.is_empty() {
+        all_columns.to_vec()
+    } else {
+        selected
+    }
+}
+
+fn projection_sql(columns: &[String]) -> String {
+    columns
+        .iter()
+        .map(|column| quoted_identifier(column))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn get_window_from_source(
+    connection: &Connection,
+    source_sql: &str,
+    columns: Vec<String>,
+    offset: usize,
+    limit: usize,
+    filters: Vec<ColumnFilter>,
+    sort_column: Option<String>,
+    sort_direction: Option<String>,
+    visible_columns: Vec<String>,
+) -> Result<TableWindow, String> {
+    let total_start = Instant::now();
+    let safe_limit = limit.clamp(25, 500);
+    let safe_offset = offset;
+    let active_filters = sanitize_filters(filters, &columns);
+    let where_clause = build_where_clause(&active_filters);
+    let filter_values = filter_params(&active_filters);
+    let (order_clause, safe_sort_column, safe_sort_direction) =
+        build_order_clause(sort_column, sort_direction, &columns);
+    let selected_columns = selected_columns(&columns, &visible_columns);
+    let projection = projection_sql(&selected_columns);
+    let filter_refs = filter_values
+        .iter()
+        .map(|value| value as &dyn ToSql)
+        .collect::<Vec<_>>();
+
+    let duckdb_start = Instant::now();
+    let total_rows = connection
+        .query_row(
+            &format!("SELECT COUNT(*) FROM ({source_sql}) AS source_query{where_clause}"),
+            params_from_iter(filter_refs.iter().copied()),
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("Nao foi possivel contar as linhas: {error}"))?
+        .max(0) as usize;
+
+    let sql = format!(
+        "SELECT {projection} FROM ({source_sql}) AS source_query{where_clause}{order_clause} LIMIT ? OFFSET ?"
+    );
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| format!("Nao foi possivel preparar a consulta: {error}"))?;
+    let mut query_params = filter_values
+        .iter()
+        .map(|value| value as &dyn ToSql)
+        .collect::<Vec<_>>();
+    let limit_param = safe_limit as i64;
+    let offset_param = safe_offset as i64;
+    query_params.push(&limit_param);
+    query_params.push(&offset_param);
+    let mut query = statement
+        .query(params_from_iter(query_params))
+        .map_err(|error| format!("Nao foi possivel consultar os dados: {error}"))?;
+    let duckdb_elapsed = duckdb_start.elapsed();
+
+    let rust_start = Instant::now();
+    let mut rows = Vec::new();
+
+    while let Some(row) = query
+        .next()
+        .map_err(|error| format!("Nao foi possivel ler uma linha: {error}"))?
+    {
+        let mut values = Vec::with_capacity(selected_columns.len());
+
+        for index in 0..selected_columns.len() {
+            let value = row
+                .get_ref(index)
+                .map_err(|error| format!("Nao foi possivel ler a coluna {}: {error}", index + 1))?;
+            values.push(value_ref_to_string(value));
+        }
+
+        rows.push(values);
+    }
+
+    let next_offset = safe_offset + rows.len();
+    let has_more = next_offset < total_rows;
+    let performance = GridPerformance {
+        query_duckdb_ms: duckdb_elapsed.as_millis(),
+        rust_processing_ms: rust_start.elapsed().as_millis(),
+        total_ms: total_start.elapsed().as_millis(),
+        rows: rows.len(),
+        offset: safe_offset,
+        limit: safe_limit,
+    };
+
+    eprintln!(
+        "[GRID_PERFORMANCE]\nquery_duckdb: {} ms\nrust_processing: {} ms\ntotal: {} ms\nrows: {}\noffset: {}\nlimit: {}",
+        performance.query_duckdb_ms,
+        performance.rust_processing_ms,
+        performance.total_ms,
+        performance.rows,
+        performance.offset,
+        performance.limit
+    );
+
+    let column_count = columns.len();
+
+    Ok(TableWindow {
+        columns,
+        rows,
+        total_rows,
+        offset: safe_offset,
+        limit: safe_limit,
+        has_more,
+        next_offset: has_more.then_some(next_offset),
+        sort_column: safe_sort_column,
+        sort_direction: safe_sort_direction,
+        filters: active_filters,
+        stats: empty_stats(column_count),
+        performance,
     })
 }
 
@@ -2887,6 +3057,33 @@ fn get_table_page(
 }
 
 #[tauri::command]
+fn get_table_window(
+    app: AppHandle,
+    document_id: String,
+    offset: usize,
+    limit: usize,
+    filters: Vec<ColumnFilter>,
+    sort_column: Option<String>,
+    sort_direction: Option<String>,
+    visible_columns: Vec<String>,
+) -> Result<TableWindow, String> {
+    let connection = open_database(&app)?;
+    let table_name = get_document_table(&connection, &document_id)?;
+    let columns = get_columns(&connection, &table_name)?;
+    get_window_from_source(
+        &connection,
+        &format!("SELECT * FROM {}", table_sql(&table_name)),
+        columns,
+        offset,
+        limit,
+        filters,
+        sort_column,
+        sort_direction,
+        visible_columns,
+    )
+}
+
+#[tauri::command]
 fn get_sql_page(
     app: AppHandle,
     query: String,
@@ -2911,6 +3108,33 @@ fn get_sql_page(
     )
 }
 
+#[tauri::command]
+fn get_sql_window(
+    app: AppHandle,
+    query: String,
+    offset: usize,
+    limit: usize,
+    filters: Vec<ColumnFilter>,
+    sort_column: Option<String>,
+    sort_direction: Option<String>,
+    visible_columns: Vec<String>,
+) -> Result<TableWindow, String> {
+    let sql = validate_read_query(&query)?;
+    let connection = open_database(&app)?;
+    let columns = get_source_columns(&connection, &sql)?;
+    get_window_from_source(
+        &connection,
+        &sql,
+        columns,
+        offset,
+        limit,
+        filters,
+        sort_column,
+        sort_direction,
+        visible_columns,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2928,7 +3152,9 @@ pub fn run() {
             rename_document_column,
             export_document,
             get_table_page,
-            get_sql_page
+            get_sql_page,
+            get_table_window,
+            get_sql_window
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar o aplicativo Tauri");

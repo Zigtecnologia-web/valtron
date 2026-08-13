@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Valtron | Análise local de dados tabulares</title>
+    <meta
+      name="description"
+      content="Valtron é uma ferramenta desktop para importar, consultar, validar e explorar arquivos Excel e CSV localmente com DuckDB."
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #090d13;
+        --bg-soft: #0e141d;
+        --panel: #121a25;
+        --panel-strong: #172231;
+        --ink: #eef5ff;
+        --muted: #a8b4c5;
+        --muted-strong: #c8d3e1;
+        --line: #243245;
+        --accent: #22c55e;
+        --accent-strong: #86efac;
+        --cyan: #38bdf8;
+        --warning: #f59e0b;
+        --shadow: rgba(0, 0, 0, 0.38);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #0b1119 0%, var(--bg) 46%, #070a0f 100%);
+        color: var(--ink);
+        line-height: 1.55;
+      }
+
+      body.modal-open {
+        overflow: hidden;
+      }
+
+      a {
+        color: var(--accent-strong);
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .shell {
+        width: min(1160px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 1px solid rgba(36, 50, 69, 0.78);
+        background: rgba(9, 13, 19, 0.88);
+        backdrop-filter: blur(18px);
+      }
+
+      .topbar-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 72px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--ink);
+        font-weight: 850;
+        letter-spacing: 0;
+      }
+
+      .brand-mark {
+        width: 40px;
+        height: 40px;
+        border: 1px solid rgba(134, 239, 172, 0.35);
+        border-radius: 8px;
+        background: #102319;
+        object-fit: cover;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 0.95rem;
+      }
+
+      .nav a {
+        color: var(--muted-strong);
+      }
+
+      .hero {
+        padding: 72px 0 58px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(420px, 1.1fr);
+        gap: 38px;
+        align-items: center;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 18px;
+        max-width: 760px;
+        font-size: clamp(2.6rem, 5.2vw, 5.4rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        margin-bottom: 28px;
+        max-width: 650px;
+        color: var(--muted-strong);
+        font-size: clamp(1.08rem, 2vw, 1.28rem);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+      }
+
+      .button.primary {
+        border-color: #16a34a;
+        background: #16a34a;
+        color: #04130a;
+      }
+
+      .proof {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        max-width: 680px;
+      }
+
+      .proof-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(18, 26, 37, 0.78);
+        padding: 14px;
+      }
+
+      .proof-item strong {
+        display: block;
+        color: var(--ink);
+        font-size: 1.05rem;
+      }
+
+      .proof-item span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .hero-shot,
+      .capture {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 24px 70px var(--shadow);
+      }
+
+      .image-button {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: zoom-in;
+        text-align: inherit;
+      }
+
+      .image-button img {
+        display: block;
+        width: 100%;
+        height: auto;
+        transition: transform 180ms ease;
+      }
+
+      .image-button:hover img {
+        transform: scale(1.012);
+      }
+
+      section {
+        padding: 48px 0;
+      }
+
+      .section-heading {
+        max-width: 810px;
+        margin-bottom: 24px;
+      }
+
+      .section-heading h2 {
+        margin-bottom: 10px;
+        font-size: clamp(1.75rem, 3vw, 2.55rem);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .section-heading p {
+        color: var(--muted);
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .feature,
+      .stack-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.72));
+        padding: 20px;
+      }
+
+      .feature h3,
+      .stack-item h3 {
+        margin-bottom: 8px;
+        font-size: 1.04rem;
+      }
+
+      .feature p,
+      .stack-item p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.96rem;
+      }
+
+      .sales-band {
+        border-block: 1px solid var(--line);
+        background: rgba(14, 20, 29, 0.72);
+      }
+
+      .sales-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 26px;
+        align-items: start;
+      }
+
+      .argument-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .argument {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-strong);
+        padding: 18px;
+      }
+
+      .argument strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .argument p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .stack {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .capture-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .caption {
+        margin: 0;
+        padding: 13px 15px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .callout {
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-left: 5px solid var(--warning);
+        border-radius: 8px;
+        background: rgba(245, 158, 11, 0.08);
+        padding: 20px 22px;
+      }
+
+      .callout p:last-child {
+        margin-bottom: 0;
+      }
+
+      .footer {
+        padding: 34px 0 46px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.82);
+      }
+
+      .modal.is-open {
+        display: flex;
+      }
+
+      .modal-panel {
+        position: relative;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        width: min(1280px, 100%);
+        max-height: min(92vh, 900px);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #080c12;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+      }
+
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .modal-title {
+        margin: 0;
+        color: var(--muted-strong);
+        font-size: 0.98rem;
+        font-weight: 700;
+      }
+
+      .modal-figure {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 0;
+        margin: 0;
+        padding: 14px;
+      }
+
+      .modal-figure img {
+        display: block;
+        max-width: 100%;
+        max-height: calc(92vh - 132px);
+        border-radius: 6px;
+      }
+
+      .modal-controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-top: 1px solid var(--line);
+      }
+
+      .icon-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 42px;
+        min-height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 1rem;
+      }
+
+      .icon-button:hover,
+      .button:hover {
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+
+      @media (max-width: 920px) {
+        .topbar-inner {
+          align-items: flex-start;
+          flex-direction: column;
+          justify-content: center;
+          padding: 14px 0;
+        }
+
+        .nav {
+          flex-wrap: wrap;
+        }
+
+        .hero {
+          padding-top: 36px;
+        }
+
+        .hero-grid,
+        .feature-grid,
+        .sales-grid,
+        .stack,
+        .capture-grid,
+        .proof {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell topbar-inner">
+        <a class="brand" href="#">
+          <img class="brand-mark" src="images/icon.png" alt="" />
+          <span>Valtron</span>
+        </a>
+        <nav class="nav" aria-label="Navegação principal">
+          <a href="#recursos">Recursos</a>
+          <a href="#por-que-usar">Por que usar</a>
+          <a href="#interface">Interface</a>
+          <a href="https://github.com/Zigtecnologia-web/valtron#readme">README</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="shell hero-grid">
+          <div>
+            <p class="eyebrow">Análise local para arquivos grandes</p>
+            <h1>Transforme planilhas pesadas em análise rápida.</h1>
+            <p class="lead">
+              Valtron é um data studio desktop para quem precisa abrir, validar
+              e consultar Excel e CSV grandes sem mandar dados sensíveis para a
+              nuvem. Importe o arquivo, filtre, ordene, rode SQL de leitura e
+              encontre problemas nos dados com velocidade de banco analítico.
+            </p>
+            <div class="actions">
+              <a
+                class="button primary"
+                href="https://github.com/Zigtecnologia-web/valtron/blob/main/docs/PROJETO.md"
+              >
+                Ver documentação técnica
+              </a>
+              <a class="button" href="https://github.com/Zigtecnologia-web/valtron">
+                Ver repositório
+              </a>
+            </div>
+            <div class="proof" aria-label="Destaques do Valtron">
+              <div class="proof-item">
+                <strong>Local-first</strong>
+                <span>Seus dados continuam no computador.</span>
+              </div>
+              <div class="proof-item">
+                <strong>DuckDB</strong>
+                <span>Motor analítico feito para consulta rápida.</span>
+              </div>
+              <div class="proof-item">
+                <strong>Sem travar</strong>
+                <span>Grid paginada para navegar por bases grandes.</span>
+              </div>
+            </div>
+          </div>
+          <figure class="hero-shot">
+            <button
+              class="image-button"
+              type="button"
+              data-slide="0"
+              aria-label="Abrir imagem principal ampliada"
+            >
+              <img
+                src="images/valtron-interface-compacta.png"
+                alt="Interface principal do Valtron com grid de dados importados"
+              />
+            </button>
+          </figure>
+        </div>
+      </section>
+
+      <section id="recursos">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">O que você ganha</p>
+            <h2>Menos espera, menos risco e mais clareza sobre seus dados.</h2>
+            <p>
+              O Valtron foi criado para substituir o ciclo lento de abrir
+              planilhas enormes, esperar a interface responder e perder tempo
+              procurando inconsistências manualmente.
+            </p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature">
+              <h3>Importação local de Excel e CSV</h3>
+              <p>
+                Abra arquivos XLSX, XLSM e CSV pelo seletor nativo e mantenha
+                cada importação organizada como um documento independente.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>Navegação pensada para volume</h3>
+              <p>
+                Explore bases grandes com paginação, filtros por coluna e
+                ordenação sem depender da planilha inteira carregada na tela.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>Diagnóstico de qualidade</h3>
+              <p>
+                Veja rapidamente quantas células estão vazias, quais colunas
+                concentram falhas e onde vale investigar primeiro.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>SQL para perguntas diretas</h3>
+              <p>
+                Use consultas somente leitura para cruzar, resumir e validar
+                dados sem alterar a base original.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>Privacidade por padrão</h3>
+              <p>
+                Dados financeiros, fiscais, cadastrais ou operacionais ficam
+                locais, sem upload obrigatório para serviços externos.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>Interface objetiva</h3>
+              <p>
+                Workspaces, documentos, grid, filtros, estatísticas e SQL ficam
+                próximos para acelerar o fluxo de investigação.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="por-que-usar" class="sales-band">
+        <div class="shell sales-grid">
+          <div class="section-heading">
+            <p class="eyebrow">Por que usar</p>
+            <h2>Porque planilha grande não deveria virar gargalo.</h2>
+            <p>
+              Valtron atende equipes que recebem arquivos pesados, precisam
+              validar dados antes de importar para sistemas internos e não podem
+              depender de upload para analisar informações sensíveis.
+            </p>
+          </div>
+          <div class="argument-list">
+            <article class="argument">
+              <strong>Para auditoria e conferência</strong>
+              <p>
+                Encontre vazios, padrões suspeitos e divergências antes que o
+                arquivo avance no processo.
+              </p>
+            </article>
+            <article class="argument">
+              <strong>Para operação e suporte</strong>
+              <p>
+                Abra bases de clientes, cadastros, matrículas, códigos e
+                relatórios sem perder zeros à esquerda ou formatos importantes.
+              </p>
+            </article>
+            <article class="argument">
+              <strong>Para análise sem infraestrutura</strong>
+              <p>
+                Tenha uma experiência próxima de um banco analítico sem montar
+                servidor, pipeline ou ambiente em nuvem.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="stack">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Tecnologia</p>
+            <h2>Stack desktop enxuta para processamento local.</h2>
+          </div>
+          <div class="stack">
+            <article class="stack-item">
+              <h3>Tauri 2</h3>
+              <p>Empacotamento desktop e ponte nativa.</p>
+            </article>
+            <article class="stack-item">
+              <h3>Rust</h3>
+              <p>Importação, persistência e consultas.</p>
+            </article>
+            <article class="stack-item">
+              <h3>DuckDB</h3>
+              <p>Motor analítico local embutido.</p>
+            </article>
+            <article class="stack-item">
+              <h3>TypeScript</h3>
+              <p>Interface e estado do frontend.</p>
+            </article>
+            <article class="stack-item">
+              <h3>Vite</h3>
+              <p>Servidor de desenvolvimento e build web.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="interface">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Interface</p>
+            <h2>Veja os dados, os documentos e a qualidade em uma tela.</h2>
+            <p>
+              Clique nas imagens para abrir a visualização ampliada.
+            </p>
+          </div>
+          <div class="capture-grid">
+            <figure class="capture">
+              <button
+                class="image-button"
+                type="button"
+                data-slide="0"
+                aria-label="Abrir visualização principal ampliada"
+              >
+                <img
+                  src="images/valtron-interface-compacta.png"
+                  alt="Grid principal de dados importados no Valtron"
+                />
+              </button>
+              <figcaption class="caption">
+                Visualização principal com documento importado, estatísticas e
+                paginação.
+              </figcaption>
+            </figure>
+            <figure class="capture">
+              <button
+                class="image-button"
+                type="button"
+                data-slide="1"
+                aria-label="Abrir painel de workspaces ampliado"
+              >
+                <img
+                  src="images/valtron-interface-workspace.png"
+                  alt="Valtron com painel lateral de workspaces e documentos aberto"
+                />
+              </button>
+              <figcaption class="caption">
+                Painel lateral com workspaces e documentos importados.
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="shell">
+          <div class="callout">
+            <p><strong>Observação sobre GitHub Pages:</strong></p>
+            <p>
+              Esta página é estática e serve para apresentar o projeto. O app
+              completo depende do Tauri, Rust e DuckDB local, por isso não roda
+              diretamente dentro do navegador no GitHub Pages.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="shell">
+        Valtron é mantido no repositório
+        <a href="https://github.com/Zigtecnologia-web/valtron">Zigtecnologia-web/valtron</a>.
+      </div>
+    </footer>
+
+    <div class="modal" id="image-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-panel">
+        <header class="modal-header">
+          <p class="modal-title" id="modal-title">Interface do Valtron</p>
+          <button class="icon-button" type="button" id="modal-close" aria-label="Fechar imagem">×</button>
+        </header>
+        <figure class="modal-figure">
+          <img id="modal-image" src="images/valtron-interface-compacta.png" alt="" />
+        </figure>
+        <div class="modal-controls">
+          <button class="icon-button" type="button" id="modal-prev" aria-label="Imagem anterior">‹</button>
+          <span id="modal-counter" aria-live="polite">1 de 2</span>
+          <button class="icon-button" type="button" id="modal-next" aria-label="Próxima imagem">›</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const slides = [
+        {
+          src: "images/valtron-interface-compacta.png",
+          alt: "Interface principal do Valtron com grid de dados importados",
+          title: "Visualização principal",
+        },
+        {
+          src: "images/valtron-interface-workspace.png",
+          alt: "Valtron com painel lateral de workspaces e documentos aberto",
+          title: "Workspaces e documentos",
+        },
+      ];
+
+      const modal = document.querySelector("#image-modal");
+      const modalImage = document.querySelector("#modal-image");
+      const modalTitle = document.querySelector("#modal-title");
+      const modalCounter = document.querySelector("#modal-counter");
+      const closeButton = document.querySelector("#modal-close");
+      const prevButton = document.querySelector("#modal-prev");
+      const nextButton = document.querySelector("#modal-next");
+      let currentSlide = 0;
+
+      function showSlide(index) {
+        currentSlide = (index + slides.length) % slides.length;
+        const slide = slides[currentSlide];
+        modalImage.src = slide.src;
+        modalImage.alt = slide.alt;
+        modalTitle.textContent = slide.title;
+        modalCounter.textContent = `${currentSlide + 1} de ${slides.length}`;
+      }
+
+      function openModal(index) {
+        showSlide(index);
+        modal.classList.add("is-open");
+        document.body.classList.add("modal-open");
+        closeButton.focus();
+      }
+
+      function closeModal() {
+        modal.classList.remove("is-open");
+        document.body.classList.remove("modal-open");
+      }
+
+      document.querySelectorAll("[data-slide]").forEach((button) => {
+        button.addEventListener("click", () => {
+          openModal(Number(button.dataset.slide || 0));
+        });
+      });
+
+      closeButton.addEventListener("click", closeModal);
+      prevButton.addEventListener("click", () => showSlide(currentSlide - 1));
+      nextButton.addEventListener("click", () => showSlide(currentSlide + 1));
+
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) {
+          closeModal();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (!modal.classList.contains("is-open")) {
+          return;
+        }
+
+        if (event.key === "Escape") {
+          closeModal();
+        }
+
+        if (event.key === "ArrowLeft") {
+          showSlide(currentSlide - 1);
+        }
+
+        if (event.key === "ArrowRight") {
+          showSlide(currentSlide + 1);
+        }
+      });
+    </script>
+  </body>
+</html>

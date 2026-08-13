@@ -1214,8 +1214,18 @@ button:disabled {
 }
 
 .pager {
+  align-items: center;
   display: flex;
   gap: 8px;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.grid-loading-status {
+  color: #7dd3fc;
+  font-size: 0.78rem;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .table-viewport {
@@ -1251,6 +1261,42 @@ th {
   top: 0;
   white-space: nowrap;
   z-index: 2;
+}
+
+th,
+.virtual-row td {
+  box-sizing: border-box;
+  width: 180px;
+}
+
+.row-number-header,
+.virtual-row .row-number-cell {
+  color: #8aa0b8;
+  flex: 0 0 72px;
+  font-variant-numeric: tabular-nums;
+  left: 0;
+  max-width: 72px;
+  min-width: 72px;
+  position: sticky;
+  text-align: left;
+  width: 72px;
+}
+
+.row-number-header {
+  background: #111827;
+  top: 0;
+  z-index: 6;
+}
+
+.row-number-filter {
+  background: #0f172a;
+  top: 43px;
+  z-index: 6;
+}
+
+.row-number-title {
+  justify-content: flex-start;
+  padding-left: 14px;
 }
 
 .filter-row th {
@@ -1369,12 +1415,43 @@ td {
   white-space: nowrap;
 }
 
-tbody tr:nth-child(odd) td {
+.virtual-body {
+  display: block;
+  position: relative;
+}
+
+.virtual-row {
+  display: flex;
+  left: 0;
+  position: absolute;
+  width: max-content;
+}
+
+.virtual-row td {
+  align-items: center;
+  display: flex;
+  min-width: 180px;
+}
+
+.virtual-row .row-number-cell {
+  background: #13233d;
+  justify-content: flex-start;
+  padding-left: 14px;
+  user-select: none;
+  z-index: 1;
+}
+
+.virtual-row:nth-child(odd) td {
   background: #0b1220;
 }
 
-tbody tr:nth-child(even) td {
+.virtual-row:nth-child(even) td {
   background: #101827;
+}
+
+.virtual-row:nth-child(odd) .row-number-cell,
+.virtual-row:nth-child(even) .row-number-cell {
+  background: #13233d;
 }
 
 .data-cell {
@@ -1388,12 +1465,16 @@ tbody tr:nth-child(even) td {
   color: #ffffff;
 }
 
-tbody tr:hover td {
+.virtual-row:hover td {
   background: #13233d;
 }
 
-tbody tr:nth-child(even) .data-cell:focus,
-tbody tr:hover .data-cell:focus {
+.virtual-row:hover .row-number-cell {
+  background: #13233d;
+}
+
+.virtual-row:nth-child(even) .data-cell:focus,
+.virtual-row:hover .data-cell:focus {
   background: rgba(37, 99, 235, 0.18);
 }
 

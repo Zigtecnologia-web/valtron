@@ -98,10 +98,22 @@ type TablePage = {
   total_rows: number;
   offset: number;
   limit: number;
+  has_more?: boolean;
+  next_offset?: number | null;
   sort_column: string | null;
   sort_direction: "asc" | "desc" | null;
   filters: ColumnFilter[];
   stats: TableStats;
+  performance?: GridPerformance;
+};
+
+type GridPerformance = {
+  query_duckdb_ms: number;
+  rust_processing_ms: number;
+  total_ms: number;
+  rows: number;
+  offset: number;
+  limit: number;
 };
 
 type FilterFocusState = {
@@ -118,6 +130,12 @@ type CellPosition = {
 type ExportFormat = "csv" | "tsv" | "xlsx";
 
 const PAGE_SIZE = 100;
+const GRID_BATCH_SIZE = PAGE_SIZE;
+const GRID_ROW_HEIGHT = 42;
+const GRID_OVERSCAN_ROWS = 8;
+const GRID_PREFETCH_RATIO = 0.75;
+const GRID_MAX_CACHED_BATCHES = 5;
+const FILTER_DEBOUNCE_MS = 275;
 const COLUMN_VISIBILITY_STORAGE_PREFIX = "valtron.columnVisibility.v1";
 
 let currentOffset = 0;
@@ -153,6 +171,13 @@ let installedVersion = "";
 let pendingUpdateInfo: UpdateInfo | null = null;
 let updateInProgress = false;
 let columnSettingsOpen = false;
+let gridRequestSeq = 0;
+let gridSignature = "";
+let gridRowsCache = new Map<number, string[][]>();
+let gridLoadingOffsets = new Set<number>();
+let gridKnownTotalRows = 0;
+let gridRenderFrame = 0;
+let gridLoading = false;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -396,7 +421,7 @@ app.innerHTML = `
     <section class="content-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">DuckDB Data Studio</p>
+          <p class="eyebrow">Valtron Data Studio</p>
           <h1>Valtron</h1>
         </div>
         <div class="topbar-actions">
@@ -494,14 +519,13 @@ app.innerHTML = `
           <p id="table-subtitle" class="toolbar-subtitle">Aguardando importacao.</p>
         </div>
         <div class="pager">
+          <span id="grid-loading-status" class="grid-loading-status" aria-live="polite"></span>
           <button id="clear-filters" class="ghost-button" type="button" disabled>Limpar filtros</button>
           <button id="open-columns" class="ghost-button" type="button" disabled>Colunas</button>
-          <button id="prev-page" class="ghost-button" type="button" disabled>Anterior</button>
-          <button id="next-page" class="ghost-button" type="button" disabled>Proxima</button>
         </div>
       </div>
 
-      <div class="table-viewport">
+      <div id="table-viewport" class="table-viewport">
         <table>
           <thead id="table-head"></thead>
           <tbody id="table-body">
@@ -603,12 +627,14 @@ const pageRangeEl = document.querySelector<HTMLElement>("#page-range");
 const qualitySubtitleEl = document.querySelector<HTMLParagraphElement>("#quality-subtitle");
 const qualityListEl = document.querySelector<HTMLDivElement>("#quality-list");
 const tableSubtitleEl = document.querySelector<HTMLParagraphElement>("#table-subtitle");
+const tableViewportEl = document.querySelector<HTMLDivElement>("#table-viewport");
 const tableHeadEl = document.querySelector<HTMLTableSectionElement>("#table-head");
 const tableBodyEl = document.querySelector<HTMLTableSectionElement>("#table-body");
 const prevButton = document.querySelector<HTMLButtonElement>("#prev-page");
 const nextButton = document.querySelector<HTMLButtonElement>("#next-page");
 const clearFiltersButton = document.querySelector<HTMLButtonElement>("#clear-filters");
 const openColumnsButton = document.querySelector<HTMLButtonElement>("#open-columns");
+const gridLoadingStatusEl = document.querySelector<HTMLSpanElement>("#grid-loading-status");
 
 function setStatus(message: string) {
   if (statusEl) {
@@ -1039,6 +1065,79 @@ function visibleColumnEntries(page: TablePage) {
 
 function visibleColumnCount(page: TablePage | null = currentPage) {
   return page ? visibleColumnEntries(page).length : 0;
+}
+
+function currentVisibleColumnNames() {
+  return currentPage ? visibleColumnEntries(currentPage).map(({ column }) => column) : [];
+}
+
+function resetGridCache() {
+  gridRequestSeq += 1;
+  gridRowsCache = new Map();
+  gridLoadingOffsets = new Set();
+  gridKnownTotalRows = 0;
+  gridSignature = "";
+  gridLoading = false;
+  if (tableViewportEl) tableViewportEl.scrollTop = 0;
+}
+
+function gridStateSignature() {
+  return JSON.stringify({
+    mode: dataMode,
+    documentId: currentDocumentId,
+    query: currentSqlQuery,
+    filters: activeFilters(),
+    sortColumn,
+    sortDirection,
+    columns: currentVisibleColumnNames(),
+  });
+}
+
+function batchOffsetForRow(rowIndex: number) {
+  return Math.max(0, Math.floor(rowIndex / GRID_BATCH_SIZE) * GRID_BATCH_SIZE);
+}
+
+function sortedCacheOffsets() {
+  return Array.from(gridRowsCache.keys()).sort((a, b) => a - b);
+}
+
+function pruneGridCache(anchorOffset: number) {
+  const offsets = sortedCacheOffsets();
+
+  while (offsets.length > GRID_MAX_CACHED_BATCHES) {
+    const farthest = offsets.reduce((selected, offset) =>
+      Math.abs(offset - anchorOffset) > Math.abs(selected - anchorOffset) ? offset : selected,
+    offsets[0]);
+    gridRowsCache.delete(farthest);
+    offsets.splice(offsets.indexOf(farthest), 1);
+  }
+}
+
+function setGridLoading(loading: boolean) {
+  gridLoading = loading;
+  if (gridLoadingStatusEl) {
+    gridLoadingStatusEl.textContent = loading ? "Carregando lote..." : "";
+  }
+}
+
+function visibleRowBounds() {
+  const viewportHeight = tableViewportEl?.clientHeight ?? 0;
+  const scrollTop = tableViewportEl?.scrollTop ?? 0;
+  const headerHeight = tableHeadEl?.getBoundingClientRect().height ?? 0;
+  const effectiveTop = Math.max(0, scrollTop - headerHeight);
+  const start = Math.max(0, Math.floor(effectiveTop / GRID_ROW_HEIGHT) - GRID_OVERSCAN_ROWS);
+  const end = Math.min(
+    gridKnownTotalRows,
+    Math.ceil((effectiveTop + viewportHeight) / GRID_ROW_HEIGHT) + GRID_OVERSCAN_ROWS,
+  );
+
+  return { start, end };
+}
+
+function cachedRow(rowIndex: number) {
+  const offset = batchOffsetForRow(rowIndex);
+  const rows = gridRowsCache.get(offset);
+  return rows?.[rowIndex - offset] ?? null;
 }
 
 function filterValue(column: string) {
@@ -1591,8 +1690,7 @@ async function setColumnVisible(column: string, visible: boolean) {
 
   writeHiddenColumns(currentDocumentId, hiddenColumns);
 
-  renderSummary(currentSummary, currentPage);
-  renderTable(currentPage);
+  await loadPage(0);
   renderColumnsModal();
 }
 
@@ -1602,8 +1700,7 @@ async function showAllColumns() {
   }
 
   writeHiddenColumns(currentDocumentId, new Set());
-  renderSummary(currentSummary, currentPage);
-  renderTable(currentPage);
+  await loadPage(0);
   renderColumnsModal();
 }
 
@@ -1685,24 +1782,25 @@ function focusCell(position: CellPosition) {
 }
 
 function restorePendingCellFocus() {
-  if (!pendingCellFocus || !currentPage || currentPage.rows.length === 0) {
+  if (!pendingCellFocus || !currentPage || gridKnownTotalRows === 0) {
     pendingCellFocus = null;
     return;
   }
 
   const target = {
-    row: Math.min(pendingCellFocus.row, currentPage.rows.length - 1),
+    row: Math.min(pendingCellFocus.row, gridKnownTotalRows - 1),
     column: Math.min(pendingCellFocus.column, visibleColumnCount(currentPage) - 1),
   };
 
-  pendingCellFocus = null;
-  focusCell(target);
+  if (focusCell(target)) {
+    pendingCellFocus = null;
+  }
 }
 
 async function moveCellFocus(position: CellPosition, direction: "next-column" | "previous-column" | "next-row" | "previous-row") {
   const columnCount = visibleColumnCount();
 
-  if (!currentPage || columnCount === 0 || currentPage.rows.length === 0) {
+  if (!currentPage || columnCount === 0 || gridKnownTotalRows === 0) {
     return;
   }
 
@@ -1736,39 +1834,28 @@ async function moveCellFocus(position: CellPosition, direction: "next-column" | 
   }
 
   if (nextRow < 0) {
-    if (currentOffset === 0) {
-      focusCell(position);
-      return;
-    }
-
-    pendingCellFocus = {
-      row: PAGE_SIZE - 1,
-      column: nextColumn,
-    };
-    await loadPage(Math.max(0, currentOffset - PAGE_SIZE));
+    focusCell(position);
     return;
   }
 
-  if (nextRow >= currentPage.rows.length) {
-    const nextOffset = currentOffset + currentPage.limit;
-
-    if (nextOffset >= currentPage.total_rows) {
-      focusCell(position);
-      return;
-    }
-
-    pendingCellFocus = {
-      row: 0,
-      column: nextColumn,
-    };
-    await loadPage(nextOffset);
+  if (nextRow >= gridKnownTotalRows) {
+    focusCell(position);
     return;
   }
 
-  focusCell({
+  const target = {
     row: nextRow,
     column: nextColumn,
-  });
+  };
+
+  pendingCellFocus = target;
+
+  if (tableViewportEl) {
+    tableViewportEl.scrollTop = Math.max(0, nextRow * GRID_ROW_HEIGHT);
+  }
+
+  ensureVisibleRowsLoaded();
+  window.setTimeout(() => restorePendingCellFocus(), 0);
 }
 
 function renderSummary(summary: ImportSummary | null, page: TablePage | null = currentPage) {
@@ -1928,18 +2015,23 @@ function renderTable(page: TablePage | null) {
     `;
     tableSubtitleEl.textContent = "Aguardando importacao.";
     pageRangeEl.textContent = "-";
+    tableBodyEl.style.height = "";
     if (openColumnsButton) openColumnsButton.disabled = true;
+    if (clearFiltersButton) clearFiltersButton.disabled = true;
+    setGridLoading(false);
     renderQuality(null);
     renderColumnsModal();
     return;
   }
 
-  const firstRow = page.total_rows === 0 ? 0 : page.offset + 1;
-  const lastRow = Math.min(page.offset + page.rows.length, page.total_rows);
+  gridKnownTotalRows = page.total_rows;
   const visibleColumns = visibleColumnEntries(page);
 
   tableHeadEl.innerHTML = `
     <tr>
+      <th class="row-number-header" aria-label="Numero da linha">
+        <div class="column-header row-number-title">#</div>
+      </th>
       ${visibleColumns
         .map(
           ({ column, index }) => `
@@ -1964,6 +2056,7 @@ function renderTable(page: TablePage | null) {
         .join("")}
     </tr>
     <tr class="filter-row">
+      <th class="row-number-header row-number-filter" aria-hidden="true"></th>
       ${visibleColumns
         .map(
           ({ column }) => `
@@ -1980,52 +2073,169 @@ function renderTable(page: TablePage | null) {
         .join("")}
     </tr>
   `;
-  tableBodyEl.innerHTML =
-    page.rows.length === 0
-      ? `
-        <tr>
-          <td class="empty-cell" colspan="${visibleColumns.length}">Nenhuma linha encontrada.</td>
-        </tr>
-      `
-      : page.rows
-          .map(
-            (row, rowIndex) => `
-              <tr>
-                ${visibleColumns
-                  .map(
-                    ({ index }, visibleIndex) => `
-                      <td
-                        class="data-cell"
-                        tabindex="0"
-                        data-cell-row="${rowIndex}"
-                        data-cell-column="${visibleIndex}"
-                      >${escapeHtml(row[index] ?? "")}</td>
-                    `,
-                  )
-                  .join("")}
-              </tr>
-            `,
-          )
-          .join("");
 
   tableSubtitleEl.textContent =
     dataMode === "sql"
       ? `${formatNumber(page.total_rows)} linhas no resultado SQL`
       : `${formatNumber(page.total_rows)} linhas na consulta atual`;
-  pageRangeEl.textContent =
-    page.total_rows === 0
-      ? "0"
-      : `${formatNumber(firstRow)}-${formatNumber(lastRow)}`;
 
-  if (prevButton) prevButton.disabled = page.offset === 0;
-  if (nextButton) nextButton.disabled = page.offset + page.limit >= page.total_rows;
   if (clearFiltersButton) clearFiltersButton.disabled = activeFilters().length === 0 && !sortColumn;
   if (openColumnsButton) openColumnsButton.disabled = dataMode !== "document" || !currentDocumentId;
 
   renderQuality(page.stats);
   renderColumnsModal();
+  renderVirtualRows();
   restoreFilterFocus(filterFocus);
   restorePendingCellFocus();
+}
+
+function renderVirtualRows() {
+  if (!tableBodyEl || !currentPage || !pageRangeEl) {
+    return;
+  }
+
+  const visibleColumns = visibleColumnEntries(currentPage);
+  const { start, end } = visibleRowBounds();
+  const renderedRows: string[] = [];
+
+  tableBodyEl.classList.add("virtual-body");
+  tableBodyEl.style.height = `${Math.max(1, gridKnownTotalRows) * GRID_ROW_HEIGHT}px`;
+
+  if (gridKnownTotalRows === 0) {
+    tableBodyEl.innerHTML = `
+      <tr class="virtual-row empty-row" style="top: 0; height: ${GRID_ROW_HEIGHT}px;">
+        <td class="empty-cell" colspan="${visibleColumns.length + 1}">Nenhuma linha encontrada.</td>
+      </tr>
+    `;
+    pageRangeEl.textContent = "0";
+    return;
+  }
+
+  for (let rowIndex = start; rowIndex < end; rowIndex += 1) {
+    const row = cachedRow(rowIndex);
+
+    if (!row) {
+      continue;
+    }
+
+    renderedRows.push(`
+      <tr class="virtual-row" style="top: ${rowIndex * GRID_ROW_HEIGHT}px; height: ${GRID_ROW_HEIGHT}px;">
+        <td class="row-number-cell" aria-label="Linha ${formatNumber(rowIndex + 1)}">${formatNumber(rowIndex + 1)}</td>
+        ${visibleColumns
+          .map(
+            (_entry, visibleIndex) => `
+              <td
+                class="data-cell"
+                tabindex="0"
+                data-cell-row="${rowIndex}"
+                data-cell-column="${visibleIndex}"
+              >${escapeHtml(row[visibleIndex] ?? "")}</td>
+            `,
+          )
+          .join("")}
+      </tr>
+    `);
+  }
+
+  tableBodyEl.innerHTML = renderedRows.join("");
+  pageRangeEl.textContent =
+    end <= start ? "0" : `${formatNumber(start + 1)}-${formatNumber(Math.min(end, gridKnownTotalRows))}`;
+}
+
+function scheduleVirtualRender() {
+  if (gridRenderFrame) {
+    return;
+  }
+
+  gridRenderFrame = window.requestAnimationFrame(() => {
+    gridRenderFrame = 0;
+    renderVirtualRows();
+    ensureVisibleRowsLoaded();
+  });
+}
+
+async function loadWindow(offset: number, requestSeq: number, signature: string) {
+  if (gridRowsCache.has(offset) || gridLoadingOffsets.has(offset)) {
+    return;
+  }
+
+  gridLoadingOffsets.add(offset);
+  setGridLoading(true);
+  const frontendStart = performance.now();
+
+  try {
+    const visibleColumns = currentVisibleColumnNames();
+    const page =
+      dataMode === "sql"
+        ? await invoke<TablePage>("get_sql_window", {
+            query: currentSqlQuery,
+            offset,
+            limit: GRID_BATCH_SIZE,
+            filters: activeFilters(),
+            sortColumn,
+            sortDirection,
+            visibleColumns,
+          })
+        : await invoke<TablePage>("get_table_window", {
+            documentId: currentDocumentId,
+            offset,
+            limit: GRID_BATCH_SIZE,
+            filters: activeFilters(),
+            sortColumn,
+            sortDirection,
+            visibleColumns,
+          });
+
+    if (requestSeq !== gridRequestSeq || signature !== gridSignature) {
+      return;
+    }
+
+    currentPage = page;
+    currentOffset = page.offset;
+    sortColumn = page.sort_column;
+    sortDirection = page.sort_direction;
+    gridKnownTotalRows = page.total_rows;
+    gridRowsCache.set(page.offset, page.rows);
+    pruneGridCache(page.offset);
+    renderSummary(currentSummary, currentPage);
+    renderTable(currentPage);
+    setStatus("Dados carregados.");
+
+    const frontendUpdate = Math.round(performance.now() - frontendStart);
+    if (page.performance) {
+      console.debug(
+        `[GRID_PERFORMANCE]\nquery_duckdb: ${page.performance.query_duckdb_ms} ms\nrust_processing: ${page.performance.rust_processing_ms} ms\nipc_frontend_update: ${frontendUpdate} ms\ntotal_backend: ${page.performance.total_ms} ms\nrows: ${page.performance.rows}`,
+      );
+    }
+  } finally {
+    gridLoadingOffsets.delete(offset);
+    setGridLoading(gridLoadingOffsets.size > 0);
+  }
+}
+
+function ensureVisibleRowsLoaded() {
+  if (!currentPage) {
+    return;
+  }
+
+  const signature = gridSignature;
+  const requestSeq = gridRequestSeq;
+  const { start, end } = visibleRowBounds();
+  const firstOffset = batchOffsetForRow(start);
+  const lastOffset = batchOffsetForRow(Math.max(start, end - 1));
+
+  for (let offset = firstOffset; offset <= lastOffset; offset += GRID_BATCH_SIZE) {
+    loadWindow(offset, requestSeq, signature).catch((error) => setStatus(String(error)));
+  }
+
+  const loadedAheadOffset = batchOffsetForRow(Math.max(0, end - 1));
+  const threshold = loadedAheadOffset + Math.floor(GRID_BATCH_SIZE * GRID_PREFETCH_RATIO);
+
+  if (end >= threshold && loadedAheadOffset + GRID_BATCH_SIZE < gridKnownTotalRows) {
+    loadWindow(loadedAheadOffset + GRID_BATCH_SIZE, requestSeq, signature).catch((error) =>
+      setStatus(String(error)),
+    );
+  }
 }
 
 async function loadPage(offset: number) {
@@ -2041,37 +2251,10 @@ async function loadPage(offset: number) {
     return;
   }
 
-  setStatus("Carregando pagina...");
-  showLoading("Carregando dados...");
-
-  try {
-    currentPage =
-      dataMode === "sql"
-        ? await invoke<TablePage>("get_sql_page", {
-            query: currentSqlQuery,
-            offset,
-            limit: PAGE_SIZE,
-            filters: activeFilters(),
-            sortColumn,
-            sortDirection,
-          })
-        : await invoke<TablePage>("get_table_page", {
-            documentId: currentDocumentId,
-            offset,
-            limit: PAGE_SIZE,
-            filters: activeFilters(),
-            sortColumn,
-            sortDirection,
-          });
-    currentOffset = currentPage.offset;
-    sortColumn = currentPage.sort_column;
-    sortDirection = currentPage.sort_direction;
-    renderSummary(currentSummary, currentPage);
-    renderTable(currentPage);
-    setStatus("Dados carregados.");
-  } finally {
-    hideLoading();
-  }
+  setStatus("Carregando dados...");
+  resetGridCache();
+  gridSignature = gridStateSignature();
+  await loadWindow(batchOffsetForRow(offset), gridRequestSeq, gridSignature);
 }
 
 function scheduleFilterReload() {
@@ -2081,7 +2264,7 @@ function scheduleFilterReload() {
 
   filterTimer = window.setTimeout(() => {
     loadPage(0).catch((error) => setStatus(String(error)));
-  }, 350);
+  }, FILTER_DEBOUNCE_MS);
 }
 
 async function importFile(path: string) {
@@ -2690,6 +2873,8 @@ tableBodyEl?.addEventListener("keydown", async (event) => {
           : "next-row"),
   );
 });
+
+tableViewportEl?.addEventListener("scroll", scheduleVirtualRender, { passive: true });
 
 prevButton?.addEventListener("click", async () => {
   if (!currentPage) return;
