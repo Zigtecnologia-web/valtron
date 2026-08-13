@@ -526,14 +526,10 @@ app.innerHTML = `
       </div>
 
       <div id="table-viewport" class="table-viewport">
-        <table>
-          <thead id="table-head"></thead>
-          <tbody id="table-body">
-            <tr>
-              <td class="empty-cell">Importe um arquivo para visualizar os dados.</td>
-            </tr>
-          </tbody>
-        </table>
+        <div id="table-head" class="grid-head"></div>
+        <div id="table-body" class="grid-body">
+          <div class="empty-cell">Importe um arquivo para visualizar os dados.</div>
+        </div>
       </div>
     </section>
     </section>
@@ -628,8 +624,8 @@ const qualitySubtitleEl = document.querySelector<HTMLParagraphElement>("#quality
 const qualityListEl = document.querySelector<HTMLDivElement>("#quality-list");
 const tableSubtitleEl = document.querySelector<HTMLParagraphElement>("#table-subtitle");
 const tableViewportEl = document.querySelector<HTMLDivElement>("#table-viewport");
-const tableHeadEl = document.querySelector<HTMLTableSectionElement>("#table-head");
-const tableBodyEl = document.querySelector<HTMLTableSectionElement>("#table-body");
+const tableHeadEl = document.querySelector<HTMLElement>("#table-head");
+const tableBodyEl = document.querySelector<HTMLElement>("#table-body");
 const prevButton = document.querySelector<HTMLButtonElement>("#prev-page");
 const nextButton = document.querySelector<HTMLButtonElement>("#next-page");
 const clearFiltersButton = document.querySelector<HTMLButtonElement>("#clear-filters");
@@ -1760,7 +1756,7 @@ function findCell(position: CellPosition) {
   }
 
   return (
-    Array.from(tableBodyEl.querySelectorAll<HTMLTableCellElement>("[data-cell-row][data-cell-column]"))
+    Array.from(tableBodyEl.querySelectorAll<HTMLElement>("[data-cell-row][data-cell-column]"))
       .find(
         (cell) =>
           Number(cell.dataset.cellRow) === position.row &&
@@ -2009,13 +2005,13 @@ function renderTable(page: TablePage | null) {
   if (!page || page.columns.length === 0) {
     tableHeadEl.innerHTML = "";
     tableBodyEl.innerHTML = `
-      <tr>
-        <td class="empty-cell">Importe um arquivo para visualizar os dados.</td>
-      </tr>
+      <div class="empty-cell">Importe um arquivo para visualizar os dados.</div>
     `;
     tableSubtitleEl.textContent = "Aguardando importacao.";
     pageRangeEl.textContent = "-";
+    tableHeadEl.style.minWidth = "";
     tableBodyEl.style.height = "";
+    tableBodyEl.style.minWidth = "";
     if (openColumnsButton) openColumnsButton.disabled = true;
     if (clearFiltersButton) clearFiltersButton.disabled = true;
     setGridLoading(false);
@@ -2026,16 +2022,20 @@ function renderTable(page: TablePage | null) {
 
   gridKnownTotalRows = page.total_rows;
   const visibleColumns = visibleColumnEntries(page);
+  const gridTemplateColumns = gridColumnTemplate(visibleColumns.length);
+  const gridMinWidth = gridContentMinWidth(visibleColumns.length);
+  tableHeadEl.style.minWidth = gridMinWidth;
+  tableBodyEl.style.minWidth = gridMinWidth;
 
   tableHeadEl.innerHTML = `
-    <tr>
-      <th class="row-number-header" aria-label="Numero da linha">
+    <div class="grid-header-row" style="grid-template-columns: ${gridTemplateColumns};">
+      <div class="grid-header-cell row-number-header" aria-label="Numero da linha">
         <div class="column-header row-number-title">#</div>
-      </th>
+      </div>
       ${visibleColumns
         .map(
           ({ column, index }) => `
-            <th>
+            <div class="grid-header-cell">
               <div class="column-header">
                 ${
                   dataMode === "document"
@@ -2050,28 +2050,28 @@ function renderTable(page: TablePage | null) {
                   <strong>${sortIndicator(column)}</strong>
                 </button>
               </div>
-            </th>
+            </div>
           `,
         )
         .join("")}
-    </tr>
-    <tr class="filter-row">
-      <th class="row-number-header row-number-filter" aria-hidden="true"></th>
+    </div>
+    <div class="grid-filter-row" style="grid-template-columns: ${gridTemplateColumns};">
+      <div class="grid-header-cell row-number-header row-number-filter" aria-hidden="true"></div>
       ${visibleColumns
         .map(
           ({ column }) => `
-            <th>
+            <div class="grid-header-cell">
               <input
                 class="column-filter"
                 data-filter-column="${escapeHtml(column)}"
                 placeholder="Filtrar"
                 value="${escapeHtml(filterValue(column))}"
               />
-            </th>
+            </div>
           `,
         )
         .join("")}
-    </tr>
+    </div>
   `;
 
   tableSubtitleEl.textContent =
@@ -2089,6 +2089,14 @@ function renderTable(page: TablePage | null) {
   restorePendingCellFocus();
 }
 
+function gridColumnTemplate(visibleColumnCount: number) {
+  return `72px repeat(${Math.max(0, visibleColumnCount)}, minmax(180px, 1fr))`;
+}
+
+function gridContentMinWidth(visibleColumnCount: number) {
+  return `${72 + Math.max(0, visibleColumnCount) * 180}px`;
+}
+
 function renderVirtualRows() {
   if (!tableBodyEl || !currentPage || !pageRangeEl) {
     return;
@@ -2097,15 +2105,18 @@ function renderVirtualRows() {
   const visibleColumns = visibleColumnEntries(currentPage);
   const { start, end } = visibleRowBounds();
   const renderedRows: string[] = [];
+  const gridTemplateColumns = gridColumnTemplate(visibleColumns.length);
+  const gridMinWidth = gridContentMinWidth(visibleColumns.length);
 
   tableBodyEl.classList.add("virtual-body");
   tableBodyEl.style.height = `${Math.max(1, gridKnownTotalRows) * GRID_ROW_HEIGHT}px`;
+  tableBodyEl.style.minWidth = gridMinWidth;
 
   if (gridKnownTotalRows === 0) {
     tableBodyEl.innerHTML = `
-      <tr class="virtual-row empty-row" style="top: 0; height: ${GRID_ROW_HEIGHT}px;">
-        <td class="empty-cell" colspan="${visibleColumns.length + 1}">Nenhuma linha encontrada.</td>
-      </tr>
+      <div class="virtual-row empty-row" style="grid-template-columns: ${gridTemplateColumns}; top: 0; height: ${GRID_ROW_HEIGHT}px;">
+        <div class="empty-cell">Nenhuma linha encontrada.</div>
+      </div>
     `;
     pageRangeEl.textContent = "0";
     return;
@@ -2119,21 +2130,21 @@ function renderVirtualRows() {
     }
 
     renderedRows.push(`
-      <tr class="virtual-row" style="top: ${rowIndex * GRID_ROW_HEIGHT}px; height: ${GRID_ROW_HEIGHT}px;">
-        <td class="row-number-cell" aria-label="Linha ${formatNumber(rowIndex + 1)}">${formatNumber(rowIndex + 1)}</td>
+      <div class="virtual-row" style="grid-template-columns: ${gridTemplateColumns}; top: ${rowIndex * GRID_ROW_HEIGHT}px; height: ${GRID_ROW_HEIGHT}px;">
+        <div class="row-number-cell" aria-label="Linha ${formatNumber(rowIndex + 1)}">${formatNumber(rowIndex + 1)}</div>
         ${visibleColumns
           .map(
             (_entry, visibleIndex) => `
-              <td
+              <div
                 class="data-cell"
                 tabindex="0"
                 data-cell-row="${rowIndex}"
                 data-cell-column="${visibleIndex}"
-              >${escapeHtml(row[visibleIndex] ?? "")}</td>
+              >${escapeHtml(row[visibleIndex] ?? "")}</div>
             `,
           )
           .join("")}
-      </tr>
+      </div>
     `);
   }
 
@@ -2846,7 +2857,7 @@ tableBodyEl?.addEventListener("keydown", async (event) => {
   }
 
   const target = event.target as HTMLElement;
-  const cell = target.closest<HTMLTableCellElement>("[data-cell-row][data-cell-column]");
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
 
   if (!cell) {
     return;
