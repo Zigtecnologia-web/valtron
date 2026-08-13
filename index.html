@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Valtron | Analise local de dados tabulares</title>
+    <meta
+      name="description"
+      content="Valtron e uma ferramenta desktop para importar, consultar, validar e explorar arquivos Excel e CSV localmente com DuckDB."
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #17202a;
+        --muted: #5a6472;
+        --line: #dce2ea;
+        --surface: #f6f8fb;
+        --panel: #ffffff;
+        --accent: #0f766e;
+        --accent-strong: #115e59;
+        --highlight: #f59e0b;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--surface);
+        color: var(--ink);
+        line-height: 1.55;
+      }
+
+      a {
+        color: var(--accent-strong);
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .shell {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 72px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--ink);
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .brand-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #fff;
+        font-weight: 900;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 0.95rem;
+      }
+
+      .hero {
+        padding: 58px 0 42px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.88fr) minmax(360px, 1.12fr);
+        gap: 36px;
+        align-items: center;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 18px;
+        font-size: clamp(2.5rem, 5vw, 5rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        margin-bottom: 28px;
+        color: #344051;
+        font-size: clamp(1.05rem, 2vw, 1.25rem);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+      }
+
+      .button.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .hero-shot {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 18px 50px rgba(15, 23, 42, 0.14);
+      }
+
+      .hero-shot img,
+      .capture img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      section {
+        padding: 42px 0;
+      }
+
+      .section-heading {
+        max-width: 760px;
+        margin-bottom: 22px;
+      }
+
+      .section-heading h2 {
+        margin-bottom: 8px;
+        font-size: clamp(1.7rem, 3vw, 2.4rem);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .section-heading p {
+        color: var(--muted);
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .feature,
+      .stack-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 18px;
+      }
+
+      .feature h3,
+      .stack-item h3 {
+        margin-bottom: 8px;
+        font-size: 1rem;
+      }
+
+      .feature p,
+      .stack-item p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .stack {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .capture-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .capture {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+
+      .caption {
+        margin: 0;
+        padding: 12px 14px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .callout {
+        border-left: 5px solid var(--highlight);
+        border-radius: 8px;
+        background: #fffaf0;
+        padding: 20px 22px;
+      }
+
+      .callout p:last-child {
+        margin-bottom: 0;
+      }
+
+      .footer {
+        padding: 34px 0 46px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      @media (max-width: 880px) {
+        .topbar {
+          align-items: flex-start;
+          flex-direction: column;
+          justify-content: center;
+          padding: 14px 0;
+        }
+
+        .nav {
+          flex-wrap: wrap;
+        }
+
+        .hero {
+          padding-top: 28px;
+        }
+
+        .hero-grid,
+        .feature-grid,
+        .stack,
+        .capture-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="shell topbar">
+      <a class="brand" href="#">
+        <span class="brand-mark" aria-hidden="true">V</span>
+        <span>Valtron</span>
+      </a>
+      <nav class="nav" aria-label="Navegacao principal">
+        <a href="#recursos">Recursos</a>
+        <a href="#stack">Stack</a>
+        <a href="#interface">Interface</a>
+        <a href="https://github.com/Zigtecnologia-web/valtron#readme">README</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="shell hero-grid">
+          <div>
+            <p class="eyebrow">Desktop local-first</p>
+            <h1>Valtron</h1>
+            <p class="lead">
+              Um mini data studio baseado em DuckDB para importar, consultar,
+              validar e explorar arquivos Excel e CSV sem depender de nuvem.
+            </p>
+            <div class="actions">
+              <a class="button primary" href="PROJETO.md">Documentacao tecnica</a>
+              <a class="button" href="https://github.com/Zigtecnologia-web/valtron">Repositorio</a>
+            </div>
+          </div>
+          <figure class="hero-shot">
+            <img
+              src="images/valtron-interface-compacta.png"
+              alt="Interface principal do Valtron com grid de dados importados"
+            />
+          </figure>
+        </div>
+      </section>
+
+      <section id="recursos">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">O que o projeto resolve</p>
+            <h2>Analise tabular pesada, mantendo os dados no computador.</h2>
+            <p>
+              O Valtron foi desenhado para ingerir arquivos grandes com rapidez,
+              persistir documentos localmente e manter a navegacao responsiva com
+              paginacao, filtros, ordenacao e SQL somente leitura.
+            </p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature">
+              <h3>Importacao local</h3>
+              <p>
+                Abre arquivos XLSX, XLSM e CSV pelo seletor nativo e registra
+                cada importacao como documento independente.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>Exploracao responsiva</h3>
+              <p>
+                Usa grid paginada, filtros por coluna e ordenacao para navegar
+                por bases grandes sem carregar tudo na tela.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>Qualidade dos dados</h3>
+              <p>
+                Exibe estatisticas de linhas, colunas, celulas vazias e
+                incidencia de vazios por coluna.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>SQL de leitura</h3>
+              <p>
+                Permite consultar os documentos importados com comandos seguros
+                como SELECT, WITH, SHOW, DESCRIBE e EXPLAIN.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>DuckDB embutido</h3>
+              <p>
+                Mantem os dados em um banco analitico local, sem upload para
+                servicos externos.
+              </p>
+            </article>
+            <article class="feature">
+              <h3>Desktop com Tauri</h3>
+              <p>
+                Combina frontend TypeScript com backend Rust para acesso nativo
+                a arquivos e processamento local.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="stack">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Tecnologia</p>
+            <h2>Stack enxuta para processamento local.</h2>
+          </div>
+          <div class="stack">
+            <article class="stack-item">
+              <h3>Tauri 2</h3>
+              <p>Empacotamento desktop e ponte nativa.</p>
+            </article>
+            <article class="stack-item">
+              <h3>Rust</h3>
+              <p>Importacao, persistencia e consultas.</p>
+            </article>
+            <article class="stack-item">
+              <h3>DuckDB</h3>
+              <p>Motor analitico local embutido.</p>
+            </article>
+            <article class="stack-item">
+              <h3>TypeScript</h3>
+              <p>Interface e estado do frontend.</p>
+            </article>
+            <article class="stack-item">
+              <h3>Vite</h3>
+              <p>Servidor de desenvolvimento e build web.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="interface">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Interface</p>
+            <h2>Workspace, documentos e grid de dados em uma tela.</h2>
+          </div>
+          <div class="capture-grid">
+            <figure class="capture">
+              <img
+                src="images/valtron-interface-compacta.png"
+                alt="Grid principal de dados importados no Valtron"
+              />
+              <figcaption class="caption">
+                Visualizacao principal com documento importado e paginacao.
+              </figcaption>
+            </figure>
+            <figure class="capture">
+              <img
+                src="images/valtron-interface-workspace.png"
+                alt="Valtron com painel lateral de workspaces e documentos aberto"
+              />
+              <figcaption class="caption">
+                Painel lateral com workspaces e documentos importados.
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="shell">
+          <div class="callout">
+            <p><strong>Observacao sobre GitHub Pages:</strong></p>
+            <p>
+              Esta pagina e estatica e serve para apresentar o projeto. O app
+              desktop completo depende do Tauri, Rust e DuckDB local, por isso
+              nao roda diretamente dentro do navegador no GitHub Pages.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="shell">
+        Valtron e mantido no repositorio
+        <a href="https://github.com/Zigtecnologia-web/valtron">Zigtecnologia-web/valtron</a>.
+      </div>
+    </footer>
+  </body>
+</html>
