@@ -129,14 +129,53 @@ type CellPosition = {
 
 type ExportFormat = "csv" | "tsv" | "xlsx";
 
+type VisibleColumnEntry = {
+  column: string;
+  index: number;
+};
+
+type ColumnPreferences = {
+  width?: number;
+  hidden?: boolean;
+  order?: number;
+  pinned?: "left" | "right" | null;
+  wrap?: boolean;
+};
+
+type SelectedCellState = CellPosition & {
+  rowId: string;
+  columnName: string;
+  value: string;
+};
+
+type ResizeState = {
+  pointerId: number;
+  visibleIndex: number;
+  columnName: string;
+  startX: number;
+  startWidth: number;
+};
+
 const PAGE_SIZE = 100;
 const GRID_BATCH_SIZE = PAGE_SIZE;
 const GRID_ROW_HEIGHT = 42;
 const GRID_OVERSCAN_ROWS = 8;
 const GRID_PREFETCH_RATIO = 0.75;
 const GRID_MAX_CACHED_BATCHES = 5;
+const GRID_ROW_NUMBER_WIDTH = 72;
 const FILTER_DEBOUNCE_MS = 275;
 const COLUMN_VISIBILITY_STORAGE_PREFIX = "valtron.columnVisibility.v1";
+const COLUMN_WIDTH_STORAGE_PREFIX = "valtron.columnWidths.v1";
+const COLUMN_WIDTH_CONFIG = {
+  min: 80,
+  default: 180,
+  maxInitial: 400,
+  maxAutoFit: 500,
+  resizeMax: 900,
+  headerPadding: 58,
+  cellPadding: 28,
+  autoFitSampleSize: 500,
+};
 
 let currentOffset = 0;
 let currentPage: TablePage | null = null;
@@ -178,6 +217,12 @@ let gridLoadingOffsets = new Set<number>();
 let gridKnownTotalRows = 0;
 let gridRenderFrame = 0;
 let gridLoading = false;
+let columnPreferences = new Map<string, ColumnPreferences>();
+let selectedCell: SelectedCellState | null = null;
+let cellPopoverEl: HTMLDivElement | null = null;
+let activePopoverMode: "selection" | "hover" | null = null;
+let resizeState: ResizeState | null = null;
+let measureContext: CanvasRenderingContext2D | null = null;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -1046,11 +1091,134 @@ function writeHiddenColumns(documentId: string, hiddenColumns: Set<string>) {
   localStorage.setItem(key, JSON.stringify(Array.from(hiddenColumns)));
 }
 
+function columnWidthStorageKey() {
+  const scope =
+    dataMode === "sql"
+      ? `sql.${currentSqlQuery ?? ""}`
+      : currentDocumentId
+        ? `document.${currentDocumentId}`
+        : "empty";
+
+  return `${COLUMN_WIDTH_STORAGE_PREFIX}.${scope}`;
+}
+
+function clampColumnWidth(width: number, max = COLUMN_WIDTH_CONFIG.resizeMax) {
+  return Math.round(Math.min(max, Math.max(COLUMN_WIDTH_CONFIG.min, width)));
+}
+
+function readColumnPreferences() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(columnWidthStorageKey()) ?? "{}");
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return new Map<string, ColumnPreferences>();
+    }
+
+    return new Map(
+      Object.entries(parsed)
+        .filter((entry): entry is [string, ColumnPreferences] => {
+          const [, value] = entry;
+          return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+        })
+        .map(([column, preference]) => [
+          column,
+          {
+            ...preference,
+            width:
+              typeof preference.width === "number"
+                ? clampColumnWidth(preference.width)
+                : undefined,
+          },
+        ]),
+    );
+  } catch (error) {
+    console.error("Falha ao ler larguras das colunas.", error);
+    return new Map<string, ColumnPreferences>();
+  }
+}
+
+function writeColumnPreferences() {
+  const entries = Array.from(columnPreferences.entries()).filter(([, preference]) =>
+    Object.values(preference).some((value) => value !== undefined && value !== null),
+  );
+
+  if (entries.length === 0) {
+    localStorage.removeItem(columnWidthStorageKey());
+    return;
+  }
+
+  localStorage.setItem(columnWidthStorageKey(), JSON.stringify(Object.fromEntries(entries)));
+}
+
+function normalizeColumnName(column: string) {
+  return column
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function inferredInitialColumnWidth(column: string) {
+  const normalized = normalizeColumnName(column);
+
+  if (/\b(cpf|cnpj)\b/.test(normalized)) {
+    return 140;
+  }
+
+  if (normalized.includes("municipio") || normalized.includes("cidade")) {
+    return 180;
+  }
+
+  if (normalized.includes("descricao") || normalized.includes("observacao") || normalized.includes("historico")) {
+    return 320;
+  }
+
+  if (normalized.includes("nome") || normalized.includes("razao")) {
+    return 280;
+  }
+
+  const estimated = Math.max(COLUMN_WIDTH_CONFIG.default, column.length * 9 + COLUMN_WIDTH_CONFIG.headerPadding);
+  return clampColumnWidth(estimated, COLUMN_WIDTH_CONFIG.maxInitial);
+}
+
+function columnWidth(column: string) {
+  return columnPreferences.get(column)?.width ?? inferredInitialColumnWidth(column);
+}
+
+function setColumnWidth(column: string, width: number, persist = true) {
+  const previous = columnPreferences.get(column) ?? {};
+  columnPreferences.set(column, {
+    ...previous,
+    width: clampColumnWidth(width),
+  });
+
+  if (persist) {
+    writeColumnPreferences();
+  }
+}
+
+function gridColumnsWidth(visibleColumns: VisibleColumnEntry[]) {
+  return visibleColumns.reduce((total, { column }) => total + columnWidth(column), GRID_ROW_NUMBER_WIDTH);
+}
+
+function applyGridColumnWidths(visibleColumns: VisibleColumnEntry[]) {
+  if (!tableViewportEl || !tableHeadEl || !tableBodyEl) {
+    return;
+  }
+
+  visibleColumns.forEach(({ column }, visibleIndex) => {
+    tableViewportEl.style.setProperty(`--grid-col-${visibleIndex}`, `${columnWidth(column)}px`);
+  });
+
+  const minWidth = `${gridColumnsWidth(visibleColumns)}px`;
+  tableHeadEl.style.minWidth = minWidth;
+  tableBodyEl.style.minWidth = minWidth;
+}
+
 function hiddenColumnsForCurrentGrid() {
   return dataMode === "document" ? readHiddenColumns(currentDocumentId) : new Set<string>();
 }
 
-function visibleColumnEntries(page: TablePage) {
+function visibleColumnEntries(page: TablePage): VisibleColumnEntry[] {
   const hiddenColumns = hiddenColumnsForCurrentGrid();
   const entries = page.columns
     .map((column, index) => ({ column, index }))
@@ -1074,6 +1242,8 @@ function resetGridCache() {
   gridKnownTotalRows = 0;
   gridSignature = "";
   gridLoading = false;
+  selectedCell = null;
+  hideCellPopover();
   if (tableViewportEl) tableViewportEl.scrollTop = 0;
 }
 
@@ -1150,6 +1320,14 @@ function renameColumnInLocalState(oldColumn: string, newColumn: string) {
 
   if (sortColumn === oldColumn) {
     sortColumn = newColumn;
+  }
+
+  const columnPreference = columnPreferences.get(oldColumn);
+
+  if (columnPreference) {
+    columnPreferences.delete(oldColumn);
+    columnPreferences.set(newColumn, columnPreference);
+    writeColumnPreferences();
   }
 
   if (currentSummary) {
@@ -1854,6 +2032,163 @@ async function moveCellFocus(position: CellPosition, direction: "next-column" | 
   window.setTimeout(() => restorePendingCellFocus(), 0);
 }
 
+function measureTextWidth(value: string) {
+  if (!measureContext) {
+    const canvas = document.createElement("canvas");
+    measureContext = canvas.getContext("2d");
+  }
+
+  if (!measureContext) {
+    return value.length * 8;
+  }
+
+  const font =
+    tableBodyEl && window.getComputedStyle(tableBodyEl).font
+      ? window.getComputedStyle(tableBodyEl).font
+      : "14px system-ui";
+  measureContext.font = font;
+  return measureContext.measureText(value).width;
+}
+
+function autoFitColumnWidth(visibleIndex: number, columnName: string) {
+  const sampleValues = [columnName];
+
+  for (const rows of gridRowsCache.values()) {
+    for (const row of rows) {
+      if (sampleValues.length >= COLUMN_WIDTH_CONFIG.autoFitSampleSize + 1) {
+        break;
+      }
+
+      sampleValues.push(row[visibleIndex] ?? "");
+    }
+  }
+
+  if (selectedCell?.columnName === columnName) {
+    sampleValues.push(selectedCell.value);
+  }
+
+  const widest = sampleValues.reduce(
+    (width, value, index) =>
+      Math.max(width, measureTextWidth(value) + (index === 0 ? COLUMN_WIDTH_CONFIG.headerPadding : COLUMN_WIDTH_CONFIG.cellPadding)),
+    0,
+  );
+
+  return clampColumnWidth(widest, COLUMN_WIDTH_CONFIG.maxAutoFit);
+}
+
+function isCellTruncated(cell: HTMLElement) {
+  return cell.scrollWidth > cell.clientWidth + 1;
+}
+
+function ensureCellPopover() {
+  if (!cellPopoverEl) {
+    cellPopoverEl = document.createElement("div");
+    cellPopoverEl.className = "cell-full-popover hidden";
+    cellPopoverEl.setAttribute("role", "tooltip");
+    document.body.appendChild(cellPopoverEl);
+  }
+
+  return cellPopoverEl;
+}
+
+function positionCellPopover(cell: HTMLElement, popover: HTMLElement) {
+  const rect = cell.getBoundingClientRect();
+  const viewportPadding = 8;
+  const maxWidth = Math.min(720, window.innerWidth - viewportPadding * 2);
+
+  popover.style.maxWidth = `${maxWidth}px`;
+  popover.style.left = `${Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - viewportPadding)}px`;
+  popover.style.top = `${Math.min(window.innerHeight - viewportPadding, rect.bottom + 6)}px`;
+
+  const popoverRect = popover.getBoundingClientRect();
+  const overflowRight = popoverRect.right - window.innerWidth + viewportPadding;
+
+  if (overflowRight > 0) {
+    popover.style.left = `${Math.max(viewportPadding, rect.left - overflowRight)}px`;
+  }
+
+  if (popoverRect.bottom > window.innerHeight - viewportPadding) {
+    popover.style.top = `${Math.max(viewportPadding, rect.top - popoverRect.height - 6)}px`;
+  }
+}
+
+function showCellPopover(cell: HTMLElement, value: string, mode: "selection" | "hover") {
+  if (!value || !isCellTruncated(cell)) {
+    if (mode === "selection") {
+      hideCellPopover();
+    }
+    return;
+  }
+
+  const popover = ensureCellPopover();
+  activePopoverMode = mode;
+  popover.textContent = value;
+  popover.classList.toggle("selection", mode === "selection");
+  popover.classList.remove("hidden");
+  positionCellPopover(cell, popover);
+}
+
+function hideCellPopover(mode?: "selection" | "hover") {
+  if (mode && activePopoverMode !== mode) {
+    return;
+  }
+
+  cellPopoverEl?.classList.add("hidden");
+  activePopoverMode = null;
+}
+
+function cellStateFromElement(cell: HTMLElement): SelectedCellState | null {
+  const row = Number(cell.dataset.cellRow);
+  const column = Number(cell.dataset.cellColumn);
+  const rowId = cell.dataset.valtronRowId ?? "";
+  const columnName = cell.dataset.cellColumnName ?? "";
+
+  if (!Number.isInteger(row) || !Number.isInteger(column) || !columnName) {
+    return null;
+  }
+
+  return {
+    row,
+    column,
+    rowId,
+    columnName,
+    value: cell.textContent ?? "",
+  };
+}
+
+function selectCell(cell: HTMLElement, showFullValue = true) {
+  const state = cellStateFromElement(cell);
+
+  if (!state) {
+    return;
+  }
+
+  selectedCell = state;
+  tableBodyEl
+    ?.querySelectorAll(".data-cell.selected")
+    .forEach((item) => item.classList.remove("selected"));
+  cell.classList.add("selected");
+
+  if (showFullValue) {
+    showCellPopover(cell, state.value, "selection");
+  }
+}
+
+function repositionSelectedCellPopover() {
+  if (!selectedCell || activePopoverMode !== "selection") {
+    return;
+  }
+
+  const cell = findCell(selectedCell);
+
+  if (!cell) {
+    hideCellPopover("selection");
+    return;
+  }
+
+  showCellPopover(cell, selectedCell.value, "selection");
+}
+
 function renderSummary(summary: ImportSummary | null, page: TablePage | null = currentPage) {
   const document = selectedDocument();
 
@@ -2023,9 +2358,7 @@ function renderTable(page: TablePage | null) {
   gridKnownTotalRows = page.total_rows;
   const visibleColumns = visibleColumnEntries(page);
   const gridTemplateColumns = gridColumnTemplate(visibleColumns.length);
-  const gridMinWidth = gridContentMinWidth(visibleColumns.length);
-  tableHeadEl.style.minWidth = gridMinWidth;
-  tableBodyEl.style.minWidth = gridMinWidth;
+  applyGridColumnWidths(visibleColumns);
 
   tableHeadEl.innerHTML = `
     <div class="grid-header-row" style="grid-template-columns: ${gridTemplateColumns};">
@@ -2034,8 +2367,8 @@ function renderTable(page: TablePage | null) {
       </div>
       ${visibleColumns
         .map(
-          ({ column, index }) => `
-            <div class="grid-header-cell">
+          ({ column, index }, visibleIndex) => `
+            <div class="grid-header-cell" data-header-visible-column="${visibleIndex}" data-header-column="${escapeHtml(column)}">
               <div class="column-header">
                 ${
                   dataMode === "document"
@@ -2050,6 +2383,14 @@ function renderTable(page: TablePage | null) {
                   <strong>${sortIndicator(column)}</strong>
                 </button>
               </div>
+              <button
+                class="column-resize-handle"
+                type="button"
+                data-resize-visible-column="${visibleIndex}"
+                data-resize-column="${escapeHtml(column)}"
+                aria-label="Redimensionar ${escapeHtml(column)}"
+                title="Arraste para redimensionar. Duplo clique ajusta ao conteudo visivel."
+              ></button>
             </div>
           `,
         )
@@ -2090,11 +2431,8 @@ function renderTable(page: TablePage | null) {
 }
 
 function gridColumnTemplate(visibleColumnCount: number) {
-  return `72px repeat(${Math.max(0, visibleColumnCount)}, minmax(180px, 1fr))`;
-}
-
-function gridContentMinWidth(visibleColumnCount: number) {
-  return `${72 + Math.max(0, visibleColumnCount) * 180}px`;
+  const columns = Array.from({ length: Math.max(0, visibleColumnCount) }, (_item, index) => `var(--grid-col-${index}, ${COLUMN_WIDTH_CONFIG.default}px)`);
+  return [`${GRID_ROW_NUMBER_WIDTH}px`, ...columns].join(" ");
 }
 
 function renderVirtualRows() {
@@ -2106,11 +2444,10 @@ function renderVirtualRows() {
   const { start, end } = visibleRowBounds();
   const renderedRows: string[] = [];
   const gridTemplateColumns = gridColumnTemplate(visibleColumns.length);
-  const gridMinWidth = gridContentMinWidth(visibleColumns.length);
+  applyGridColumnWidths(visibleColumns);
 
   tableBodyEl.classList.add("virtual-body");
   tableBodyEl.style.height = `${Math.max(1, gridKnownTotalRows) * GRID_ROW_HEIGHT}px`;
-  tableBodyEl.style.minWidth = gridMinWidth;
 
   if (gridKnownTotalRows === 0) {
     tableBodyEl.innerHTML = `
@@ -2134,14 +2471,21 @@ function renderVirtualRows() {
         <div class="row-number-cell" aria-label="Linha ${formatNumber(rowIndex + 1)}">${formatNumber(rowIndex + 1)}</div>
         ${visibleColumns
           .map(
-            (_entry, visibleIndex) => `
+            ({ column }, visibleIndex) => {
+              const value = row[visibleIndex] ?? "";
+              const selected = selectedCell?.row === rowIndex && selectedCell.column === visibleIndex;
+
+              return `
               <div
-                class="data-cell"
+                class="data-cell ${selected ? "selected" : ""}"
                 tabindex="0"
                 data-cell-row="${rowIndex}"
                 data-cell-column="${visibleIndex}"
-              >${escapeHtml(row[visibleIndex] ?? "")}</div>
-            `,
+                data-valtron-row-id="${rowIndex + 1}"
+                data-cell-column-name="${escapeHtml(column)}"
+              >${escapeHtml(value)}</div>
+            `;
+            },
           )
           .join("")}
       </div>
@@ -2149,6 +2493,7 @@ function renderVirtualRows() {
   }
 
   tableBodyEl.innerHTML = renderedRows.join("");
+  repositionSelectedCellPopover();
   pageRangeEl.textContent =
     end <= start ? "0" : `${formatNumber(start + 1)}-${formatNumber(Math.min(end, gridKnownTotalRows))}`;
 }
@@ -2263,6 +2608,7 @@ async function loadPage(offset: number) {
   }
 
   setStatus("Carregando dados...");
+  columnPreferences = readColumnPreferences();
   resetGridCache();
   gridSignature = gridStateSignature();
   await loadWindow(batchOffsetForRow(offset), gridRequestSeq, gridSignature);
@@ -2570,6 +2916,11 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activePopoverMode) {
+    hideCellPopover();
+    return;
+  }
+
   if (event.key === "Escape" && deleteDocumentId) {
     closeDeleteModal(false);
     return;
@@ -2613,6 +2964,31 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && exportDocumentId) {
     closeExport();
   }
+});
+
+document.addEventListener("pointermove", (event) => {
+  if (!resizeState || !currentPage) {
+    return;
+  }
+
+  const width = clampColumnWidth(resizeState.startWidth + event.clientX - resizeState.startX);
+  const visibleColumns = visibleColumnEntries(currentPage);
+  setColumnWidth(resizeState.columnName, width, false);
+  applyGridColumnWidths(visibleColumns);
+});
+
+document.addEventListener("pointerup", (event) => {
+  if (!resizeState) {
+    return;
+  }
+
+  if (event.pointerId !== resizeState.pointerId) {
+    return;
+  }
+
+  writeColumnPreferences();
+  document.body.classList.remove("is-column-resizing");
+  resizeState = null;
 });
 
 detailsModalEl?.addEventListener("click", (event) => {
@@ -2798,6 +3174,12 @@ sqlQueryEl?.addEventListener("scroll", () => {
 
 tableHeadEl?.addEventListener("click", async (event) => {
   const target = event.target as HTMLElement;
+  const resizeHandle = target.closest<HTMLButtonElement>("[data-resize-visible-column]");
+
+  if (resizeHandle) {
+    return;
+  }
+
   const editButton = target.closest<HTMLButtonElement>("[data-edit-column-index]");
 
   if (editButton) {
@@ -2829,6 +3211,53 @@ tableHeadEl?.addEventListener("click", async (event) => {
   }
 
   await loadPage(0);
+});
+
+tableHeadEl?.addEventListener("pointerdown", (event) => {
+  const target = event.target as HTMLElement;
+  const resizeHandle = target.closest<HTMLButtonElement>("[data-resize-visible-column]");
+
+  if (!resizeHandle || !currentPage) {
+    return;
+  }
+
+  const visibleIndex = Number(resizeHandle.dataset.resizeVisibleColumn);
+  const columnName = resizeHandle.dataset.resizeColumn ?? "";
+
+  if (!Number.isInteger(visibleIndex) || !columnName) {
+    return;
+  }
+
+  event.preventDefault();
+  resizeHandle.setPointerCapture(event.pointerId);
+  resizeState = {
+    pointerId: event.pointerId,
+    visibleIndex,
+    columnName,
+    startX: event.clientX,
+    startWidth: columnWidth(columnName),
+  };
+  document.body.classList.add("is-column-resizing");
+});
+
+tableHeadEl?.addEventListener("dblclick", (event) => {
+  const target = event.target as HTMLElement;
+  const resizeHandle = target.closest<HTMLButtonElement>("[data-resize-visible-column]");
+
+  if (!resizeHandle || !currentPage) {
+    return;
+  }
+
+  const visibleIndex = Number(resizeHandle.dataset.resizeVisibleColumn);
+  const columnName = resizeHandle.dataset.resizeColumn ?? "";
+
+  if (!Number.isInteger(visibleIndex) || !columnName) {
+    return;
+  }
+
+  event.preventDefault();
+  setColumnWidth(columnName, autoFitColumnWidth(visibleIndex, columnName));
+  applyGridColumnWidths(visibleColumnEntries(currentPage));
 });
 
 tableHeadEl?.addEventListener("input", (event) => {
@@ -2885,7 +3314,76 @@ tableBodyEl?.addEventListener("keydown", async (event) => {
   );
 });
 
-tableViewportEl?.addEventListener("scroll", scheduleVirtualRender, { passive: true });
+tableBodyEl?.addEventListener("focusin", (event) => {
+  const target = event.target as HTMLElement;
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (cell) {
+    selectCell(cell);
+  }
+});
+
+tableBodyEl?.addEventListener("focusout", (event) => {
+  const nextTarget = event.relatedTarget;
+
+  if (nextTarget instanceof Node && tableBodyEl.contains(nextTarget)) {
+    return;
+  }
+
+  hideCellPopover("selection");
+});
+
+tableBodyEl?.addEventListener("click", (event) => {
+  const target = event.target as HTMLElement;
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (cell) {
+    selectCell(cell);
+  }
+});
+
+tableBodyEl?.addEventListener("pointerover", (event) => {
+  if (activePopoverMode === "selection") {
+    return;
+  }
+
+  const target = event.target as HTMLElement;
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (!cell) {
+    return;
+  }
+
+  const state = cellStateFromElement(cell);
+
+  if (state) {
+    showCellPopover(cell, state.value, "hover");
+  }
+});
+
+tableBodyEl?.addEventListener("pointerout", (event) => {
+  if (activePopoverMode !== "hover") {
+    return;
+  }
+
+  const target = event.target as HTMLElement;
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (!cell || cell.contains(event.relatedTarget as Node | null)) {
+    return;
+  }
+
+  hideCellPopover("hover");
+});
+
+tableViewportEl?.addEventListener("scroll", () => {
+  scheduleVirtualRender();
+  if (activePopoverMode === "selection") {
+    window.requestAnimationFrame(repositionSelectedCellPopover);
+  } else {
+    hideCellPopover("hover");
+  }
+}, { passive: true });
 
 prevButton?.addEventListener("click", async () => {
   if (!currentPage) return;
