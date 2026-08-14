@@ -94,7 +94,9 @@ type TableStats = {
 
 type TablePage = {
   columns: string[];
-  rows: string[][];
+  column_types?: Record<string, string>;
+  rows: CellValue[][];
+  row_ids?: Array<number | null>;
   total_rows: number;
   offset: number;
   limit: number;
@@ -127,6 +129,8 @@ type CellPosition = {
   column: number;
 };
 
+type CellValue = string | null;
+
 type ExportFormat = "csv" | "tsv" | "xlsx";
 
 type VisibleColumnEntry = {
@@ -145,7 +149,16 @@ type ColumnPreferences = {
 type SelectedCellState = CellPosition & {
   rowId: string;
   columnName: string;
-  value: string;
+  value: CellValue;
+};
+
+type ActiveCellEdit = SelectedCellState & {
+  originalValue: CellValue;
+  value: CellValue;
+  draft: string;
+  operationId: number;
+  status: "editing" | "saving";
+  error: string | null;
 };
 
 type ResizeState = {
@@ -212,17 +225,22 @@ let updateInProgress = false;
 let columnSettingsOpen = false;
 let gridRequestSeq = 0;
 let gridSignature = "";
-let gridRowsCache = new Map<number, string[][]>();
+let gridRowsCache = new Map<number, CellValue[][]>();
+let gridRowIdsCache = new Map<number, Array<number | null>>();
 let gridLoadingOffsets = new Set<number>();
 let gridKnownTotalRows = 0;
 let gridRenderFrame = 0;
 let gridLoading = false;
 let columnPreferences = new Map<string, ColumnPreferences>();
 let selectedCell: SelectedCellState | null = null;
+let activeCellEdit: ActiveCellEdit | null = null;
+let cellEditSeq = 0;
+const recentCellUpdates = new Map<string, number>();
 let cellPopoverEl: HTMLDivElement | null = null;
 let activePopoverMode: "selection" | "hover" | null = null;
 let resizeState: ResizeState | null = null;
 let measureContext: CanvasRenderingContext2D | null = null;
+let pendingCellOperations = new Map<string, number>();
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -904,6 +922,66 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#039;");
 }
 
+function cellDisplayValue(value: CellValue) {
+  return value === null ? "NULL" : value;
+}
+
+function cellDraftValue(value: CellValue) {
+  return value === null ? "" : value;
+}
+
+function normalizedColumnType(columnName: string) {
+  return (currentPage?.column_types?.[columnName] ?? "VARCHAR").toUpperCase();
+}
+
+function editorInputType(columnName: string) {
+  const dataType = normalizedColumnType(columnName);
+
+  if (dataType.includes("BOOL")) return "checkbox";
+  if (dataType.includes("DATE") && !dataType.includes("TIME")) return "date";
+  if (dataType.includes("TIMESTAMP") || dataType.includes("DATETIME")) return "datetime-local";
+  if (
+    dataType.includes("INT") ||
+    dataType.includes("DECIMAL") ||
+    dataType.includes("NUMERIC") ||
+    dataType.includes("DOUBLE") ||
+    dataType.includes("FLOAT") ||
+    dataType.includes("REAL")
+  ) {
+    return "number";
+  }
+
+  return "text";
+}
+
+function cellCacheKey(rowId: string, columnName: string) {
+  return `${rowId}\u0000${columnName}`;
+}
+
+function isSameCell(a: Pick<SelectedCellState, "rowId" | "columnName"> | null, b: Pick<SelectedCellState, "rowId" | "columnName"> | null) {
+  return Boolean(a && b && a.rowId === b.rowId && a.columnName === b.columnName);
+}
+
+function rowIdForVisibleRow(rowIndex: number) {
+  const offset = batchOffsetForRow(rowIndex);
+  const rowIds = gridRowIdsCache.get(offset);
+  const rowId = rowIds?.[rowIndex - offset];
+  return rowId === null || rowId === undefined ? "" : String(rowId);
+}
+
+function updateCachedCell(rowIndex: number, visibleColumnIndex: number, value: CellValue) {
+  const offset = batchOffsetForRow(rowIndex);
+  const rows = gridRowsCache.get(offset);
+  const row = rows?.[rowIndex - offset];
+
+  if (!row || visibleColumnIndex < 0 || visibleColumnIndex >= row.length) {
+    return false;
+  }
+
+  row[visibleColumnIndex] = value;
+  return true;
+}
+
 function highlightSql(value: string) {
   return escapeHtml(value)
     .replace(
@@ -1238,11 +1316,13 @@ function currentVisibleColumnNames() {
 function resetGridCache() {
   gridRequestSeq += 1;
   gridRowsCache = new Map();
+  gridRowIdsCache = new Map();
   gridLoadingOffsets = new Set();
   gridKnownTotalRows = 0;
   gridSignature = "";
   gridLoading = false;
   selectedCell = null;
+  activeCellEdit = null;
   hideCellPopover();
   if (tableViewportEl) tableViewportEl.scrollTop = 0;
 }
@@ -1275,6 +1355,7 @@ function pruneGridCache(anchorOffset: number) {
       Math.abs(offset - anchorOffset) > Math.abs(selected - anchorOffset) ? offset : selected,
     offsets[0]);
     gridRowsCache.delete(farthest);
+    gridRowIdsCache.delete(farthest);
     offsets.splice(offsets.indexOf(farthest), 1);
   }
 }
@@ -2059,12 +2140,12 @@ function autoFitColumnWidth(visibleIndex: number, columnName: string) {
         break;
       }
 
-      sampleValues.push(row[visibleIndex] ?? "");
+      sampleValues.push(cellDisplayValue(row[visibleIndex] ?? null));
     }
   }
 
   if (selectedCell?.columnName === columnName) {
-    sampleValues.push(selectedCell.value);
+    sampleValues.push(cellDisplayValue(selectedCell.value));
   }
 
   const widest = sampleValues.reduce(
@@ -2143,16 +2224,18 @@ function cellStateFromElement(cell: HTMLElement): SelectedCellState | null {
   const rowId = cell.dataset.valtronRowId ?? "";
   const columnName = cell.dataset.cellColumnName ?? "";
 
-  if (!Number.isInteger(row) || !Number.isInteger(column) || !columnName) {
+  if (!Number.isInteger(row) || !Number.isInteger(column) || !rowId || !columnName) {
     return null;
   }
+
+  const cachedValue = cachedRow(row)?.[column] ?? null;
 
   return {
     row,
     column,
     rowId,
     columnName,
-    value: cell.textContent ?? "",
+    value: cachedValue,
   };
 }
 
@@ -2170,8 +2253,168 @@ function selectCell(cell: HTMLElement, showFullValue = true) {
   cell.classList.add("selected");
 
   if (showFullValue) {
-    showCellPopover(cell, state.value, "selection");
+    showCellPopover(cell, cellDisplayValue(state.value), "selection");
   }
+}
+
+function activeEditPosition(): CellPosition | null {
+  return activeCellEdit ? { row: activeCellEdit.row, column: activeCellEdit.column } : null;
+}
+
+function focusActiveCellEditor() {
+  if (!activeCellEdit || activeCellEdit.status !== "editing") {
+    return;
+  }
+
+  const editor = tableBodyEl?.querySelector<HTMLInputElement | HTMLTextAreaElement>("[data-cell-editor]");
+
+  if (!editor || document.activeElement === editor) {
+    return;
+  }
+
+  editor.focus({ preventScroll: true });
+  editor.setSelectionRange(editor.value.length, editor.value.length);
+}
+
+function startCellEdit(cell: HTMLElement) {
+  if (dataMode !== "document") {
+    setStatus("Edicao disponivel apenas em documentos importados.");
+    return;
+  }
+
+  const state = cellStateFromElement(cell);
+
+  if (!state) {
+    setStatus("Celula sem ID interno para edicao.");
+    return;
+  }
+
+  activeCellEdit = {
+    ...state,
+    originalValue: state.value,
+    value: state.value,
+    draft: cellDraftValue(state.value),
+    operationId: ++cellEditSeq,
+    status: "editing",
+    error: null,
+  };
+  selectedCell = state;
+  hideCellPopover();
+  renderVirtualRows();
+}
+
+function cancelActiveCellEdit(render = true) {
+  activeCellEdit = null;
+
+  if (render) {
+    renderVirtualRows();
+    if (selectedCell) {
+      window.setTimeout(() => focusCell(selectedCell as CellPosition), 0);
+    }
+  }
+}
+
+function updateActiveEditDraft(value: string) {
+  if (!activeCellEdit || activeCellEdit.status !== "editing") {
+    return;
+  }
+
+  activeCellEdit = {
+    ...activeCellEdit,
+    draft: value,
+    value,
+    error: null,
+  };
+}
+
+async function commitActiveCellEdit(renderOnNoop = true) {
+  if (!activeCellEdit || activeCellEdit.status === "saving") {
+    return true;
+  }
+
+  if (!currentDocumentId) {
+    activeCellEdit.error = "Documento nao encontrado.";
+    renderVirtualRows();
+    return false;
+  }
+
+  const edit = activeCellEdit;
+  const newValue: CellValue = edit.draft;
+
+  if (edit.originalValue === newValue) {
+    activeCellEdit = null;
+    if (renderOnNoop) renderVirtualRows();
+    return true;
+  }
+
+  const operationId = ++cellEditSeq;
+  const operationKey = cellCacheKey(edit.rowId, edit.columnName);
+  pendingCellOperations.set(operationKey, operationId);
+  activeCellEdit = {
+    ...edit,
+    value: newValue,
+    operationId,
+    status: "saving",
+    error: null,
+  };
+
+  updateCachedCell(edit.row, edit.column, newValue);
+  selectedCell = { ...edit, value: newValue };
+  renderVirtualRows();
+
+  try {
+    await invoke("update_document_cell", {
+      documentId: currentDocumentId,
+      rowId: Number(edit.rowId),
+      column: edit.columnName,
+      value: newValue,
+    });
+
+    if (pendingCellOperations.get(operationKey) !== operationId) {
+      return true;
+    }
+
+    pendingCellOperations.delete(operationKey);
+    recentCellUpdates.set(operationKey, Date.now() + 1200);
+    activeCellEdit = null;
+    renderVirtualRows();
+    window.setTimeout(() => {
+      if ((recentCellUpdates.get(operationKey) ?? 0) <= Date.now()) {
+        recentCellUpdates.delete(operationKey);
+        renderVirtualRows();
+      }
+    }, 1300);
+    setStatus("Celula atualizada.");
+    return true;
+  } catch (error) {
+    if (pendingCellOperations.get(operationKey) !== operationId) {
+      return false;
+    }
+
+    pendingCellOperations.delete(operationKey);
+    updateCachedCell(edit.row, edit.column, edit.originalValue);
+    selectedCell = { ...edit, value: edit.originalValue };
+    activeCellEdit = {
+      ...edit,
+      status: "editing",
+      error: String(error),
+    };
+    renderVirtualRows();
+    setStatus(String(error));
+    return false;
+  }
+}
+
+async function resolveActiveCellEditBeforeGridChange() {
+  if (!activeCellEdit) {
+    return true;
+  }
+
+  if (activeCellEdit.status === "saving") {
+    return false;
+  }
+
+  return commitActiveCellEdit(false);
 }
 
 function repositionSelectedCellPopover() {
@@ -2186,7 +2429,7 @@ function repositionSelectedCellPopover() {
     return;
   }
 
-  showCellPopover(cell, selectedCell.value, "selection");
+  showCellPopover(cell, cellDisplayValue(selectedCell.value), "selection");
 }
 
 function renderSummary(summary: ImportSummary | null, page: TablePage | null = currentPage) {
@@ -2472,18 +2715,44 @@ function renderVirtualRows() {
         ${visibleColumns
           .map(
             ({ column }, visibleIndex) => {
-              const value = row[visibleIndex] ?? "";
+              const value = row[visibleIndex] ?? null;
+              const rowId = rowIdForVisibleRow(rowIndex);
               const selected = selectedCell?.row === rowIndex && selectedCell.column === visibleIndex;
+              const editing = Boolean(
+                activeCellEdit &&
+                  activeCellEdit.rowId === rowId &&
+                  activeCellEdit.columnName === column,
+              );
+              const recentlyUpdated = rowId
+                ? (recentCellUpdates.get(cellCacheKey(rowId, column)) ?? 0) > Date.now()
+                : false;
+              const displayValue = cellDisplayValue(value);
+              const editable = dataMode === "document" && Boolean(rowId);
+              const error = editing ? activeCellEdit?.error : null;
+              const inputType = editorInputType(column);
+              const editor =
+                editing && activeCellEdit
+                  ? inputType === "checkbox"
+                    ? `<input class="cell-editor checkbox" data-cell-editor type="checkbox" ${/^(true|1|sim|yes)$/i.test(activeCellEdit.draft) ? "checked" : ""} ${activeCellEdit.status === "saving" ? "disabled" : ""} />`
+                    : activeCellEdit.draft.length > 120 || columnWidth(column) >= 300
+                    ? `<textarea class="cell-editor textarea" data-cell-editor spellcheck="false" ${activeCellEdit.status === "saving" ? "disabled" : ""}>${escapeHtml(activeCellEdit.draft)}</textarea>`
+                    : `<input class="cell-editor" data-cell-editor type="${inputType}" value="${escapeHtml(activeCellEdit.draft)}" ${activeCellEdit.status === "saving" ? "disabled" : ""} />`
+                  : "";
 
               return `
               <div
-                class="data-cell ${selected ? "selected" : ""}"
+                class="data-cell ${selected ? "selected" : ""} ${editing ? "editing" : ""} ${recentlyUpdated ? "recently-updated" : ""} ${value === null ? "is-null" : ""}"
                 tabindex="0"
                 data-cell-row="${rowIndex}"
                 data-cell-column="${visibleIndex}"
-                data-valtron-row-id="${rowIndex + 1}"
+                data-valtron-row-id="${escapeHtml(rowId)}"
                 data-cell-column-name="${escapeHtml(column)}"
-              >${escapeHtml(value)}</div>
+                aria-readonly="${editable ? "false" : "true"}"
+              >${
+                editing
+                  ? `${editor}${error ? `<span class="cell-edit-error">${escapeHtml(error)}</span>` : ""}`
+                  : escapeHtml(displayValue)
+              }</div>
             `;
             },
           )
@@ -2493,6 +2762,7 @@ function renderVirtualRows() {
   }
 
   tableBodyEl.innerHTML = renderedRows.join("");
+  focusActiveCellEditor();
   repositionSelectedCellPopover();
   pageRangeEl.textContent =
     end <= start ? "0" : `${formatNumber(start + 1)}-${formatNumber(Math.min(end, gridKnownTotalRows))}`;
@@ -2552,6 +2822,7 @@ async function loadWindow(offset: number, requestSeq: number, signature: string)
     sortDirection = page.sort_direction;
     gridKnownTotalRows = page.total_rows;
     gridRowsCache.set(page.offset, page.rows);
+    gridRowIdsCache.set(page.offset, page.row_ids ?? page.rows.map(() => null));
     pruneGridCache(page.offset);
     renderSummary(currentSummary, currentPage);
     renderTable(currentPage);
@@ -2595,6 +2866,11 @@ function ensureVisibleRowsLoaded() {
 }
 
 async function loadPage(offset: number) {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   if (dataMode === "document" && !currentDocumentId) {
     renderSummary(null, null);
     renderTable(null);
@@ -2693,6 +2969,11 @@ async function refreshDocuments() {
 }
 
 async function selectWorkspace(workspaceId: string) {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   currentWorkspaceId = workspaceId;
   editingWorkspaceId = null;
   if (workspaceNameEl) workspaceNameEl.value = "";
@@ -2773,6 +3054,11 @@ async function createWorkspace() {
 }
 
 async function selectDocument(documentId: string) {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   dataMode = "document";
   currentSqlQuery = null;
   currentDocumentId = documentId;
@@ -3133,6 +3419,11 @@ runSqlButton?.addEventListener("click", async () => {
     return;
   }
 
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   runSqlButton.disabled = true;
   sqlStatusEl.textContent = "Executando consulta na grid principal...";
 
@@ -3155,6 +3446,11 @@ runSqlButton?.addEventListener("click", async () => {
 });
 
 clearSqlButton?.addEventListener("click", async () => {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   dataMode = "document";
   currentSqlQuery = null;
   currentPage = null;
@@ -3183,6 +3479,11 @@ tableHeadEl?.addEventListener("click", async (event) => {
   const editButton = target.closest<HTMLButtonElement>("[data-edit-column-index]");
 
   if (editButton) {
+    if (!(await resolveActiveCellEditBeforeGridChange())) {
+      setStatus("Aguarde a atualizacao da celula atual.");
+      return;
+    }
+
     const columnIndex = Number(editButton.dataset.editColumnIndex);
 
     if (Number.isInteger(columnIndex)) {
@@ -3199,6 +3500,11 @@ tableHeadEl?.addEventListener("click", async (event) => {
   }
 
   const column = button.dataset.sortColumn ?? "";
+
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
 
   if (sortColumn !== column) {
     sortColumn = column;
@@ -3260,10 +3566,15 @@ tableHeadEl?.addEventListener("dblclick", (event) => {
   applyGridColumnWidths(visibleColumnEntries(currentPage));
 });
 
-tableHeadEl?.addEventListener("input", (event) => {
+tableHeadEl?.addEventListener("input", async (event) => {
   const target = event.target as HTMLInputElement;
 
   if (!target.matches("[data-filter-column]")) {
+    return;
+  }
+
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
     return;
   }
 
@@ -3274,6 +3585,37 @@ tableHeadEl?.addEventListener("input", (event) => {
 });
 
 tableBodyEl?.addEventListener("keydown", async (event) => {
+  const target = event.target as HTMLElement;
+  const editor = target.closest<HTMLInputElement | HTMLTextAreaElement>("[data-cell-editor]");
+
+  if (editor && activeCellEdit) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelActiveCellEdit();
+      return;
+    }
+
+    if (event.key === "Enter" && !(editor instanceof HTMLTextAreaElement && event.shiftKey)) {
+      event.preventDefault();
+      await commitActiveCellEdit();
+      return;
+    }
+
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const position = activeEditPosition();
+      const committed = await commitActiveCellEdit();
+
+      if (committed && position) {
+        await moveCellFocus(position, event.shiftKey ? "previous-column" : "next-column");
+      }
+
+      return;
+    }
+
+    return;
+  }
+
   const navigationByKey: Record<string, "next-column" | "previous-column" | "next-row" | "previous-row"> = {
     ArrowDown: "next-row",
     ArrowLeft: "previous-column",
@@ -3281,11 +3623,10 @@ tableBodyEl?.addEventListener("keydown", async (event) => {
     ArrowUp: "previous-row",
   };
 
-  if (event.key !== "Tab" && event.key !== "Enter" && !(event.key in navigationByKey)) {
+  if (event.key !== "Tab" && event.key !== "Enter" && event.key !== "F2" && !(event.key in navigationByKey)) {
     return;
   }
 
-  const target = event.target as HTMLElement;
   const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
 
   if (!cell) {
@@ -3300,6 +3641,11 @@ tableBodyEl?.addEventListener("keydown", async (event) => {
   }
 
   event.preventDefault();
+
+  if (event.key === "Enter" || event.key === "F2") {
+    startCellEdit(cell);
+    return;
+  }
 
   await moveCellFocus(
     { row, column },
@@ -3316,11 +3662,25 @@ tableBodyEl?.addEventListener("keydown", async (event) => {
 
 tableBodyEl?.addEventListener("focusin", (event) => {
   const target = event.target as HTMLElement;
+  if (target.matches("[data-cell-editor]")) {
+    return;
+  }
+
   const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
 
   if (cell) {
     selectCell(cell);
   }
+});
+
+tableBodyEl?.addEventListener("input", (event) => {
+  const target = event.target as HTMLInputElement | HTMLTextAreaElement;
+
+  if (!target.matches("[data-cell-editor]")) {
+    return;
+  }
+
+  updateActiveEditDraft(target instanceof HTMLInputElement && target.type === "checkbox" ? String(target.checked) : target.value);
 });
 
 tableBodyEl?.addEventListener("focusout", (event) => {
@@ -3333,12 +3693,40 @@ tableBodyEl?.addEventListener("focusout", (event) => {
   hideCellPopover("selection");
 });
 
-tableBodyEl?.addEventListener("click", (event) => {
+tableBodyEl?.addEventListener("click", async (event) => {
   const target = event.target as HTMLElement;
+  if (target.closest("[data-cell-editor]")) {
+    return;
+  }
+
   const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
 
   if (cell) {
+    const state = cellStateFromElement(cell);
+
+    if (activeCellEdit && state && !isSameCell(activeCellEdit, state)) {
+      const committed = await commitActiveCellEdit();
+
+      if (!committed) {
+        return;
+      }
+    }
+
     selectCell(cell);
+  }
+});
+
+tableBodyEl?.addEventListener("dblclick", (event) => {
+  const target = event.target as HTMLElement;
+
+  if (target.closest("[data-cell-editor]")) {
+    return;
+  }
+
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (cell) {
+    startCellEdit(cell);
   }
 });
 
@@ -3357,7 +3745,7 @@ tableBodyEl?.addEventListener("pointerover", (event) => {
   const state = cellStateFromElement(cell);
 
   if (state) {
-    showCellPopover(cell, state.value, "hover");
+    showCellPopover(cell, cellDisplayValue(state.value), "hover");
   }
 });
 
@@ -3377,6 +3765,15 @@ tableBodyEl?.addEventListener("pointerout", (event) => {
 });
 
 tableViewportEl?.addEventListener("scroll", () => {
+  if (activeCellEdit?.status === "editing") {
+    const { start, end } = visibleRowBounds();
+
+    if (activeCellEdit.row < start || activeCellEdit.row >= end) {
+      commitActiveCellEdit().catch((error) => setStatus(String(error)));
+      return;
+    }
+  }
+
   scheduleVirtualRender();
   if (activePopoverMode === "selection") {
     window.requestAnimationFrame(repositionSelectedCellPopover);
@@ -3399,6 +3796,11 @@ nextButton?.addEventListener("click", async () => {
 });
 
 clearFiltersButton?.addEventListener("click", async () => {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   filterValues = new Map();
   sortColumn = null;
   sortDirection = null;
