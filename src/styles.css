@@ -1,4 +1,8 @@
 :root {
+  --scrollbar-track: #070b12;
+  --scrollbar-thumb: #273449;
+  --scrollbar-thumb-hover: #38bdf8;
+  --scrollbar-corner: #0a0f1a;
   color: #e5edf8;
   background: #070b12;
   font-family:
@@ -12,6 +16,31 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-corner);
 }
 
 body {
@@ -1235,6 +1264,12 @@ button:disabled {
   scrollbar-gutter: stable;
 }
 
+.is-column-resizing,
+.is-column-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
 .grid-head {
   position: sticky;
   top: 0;
@@ -1252,6 +1287,7 @@ button:disabled {
 .grid-header-cell {
   background: #111827;
   border-bottom: 1px solid #2b3a50;
+  border-right: 1px solid rgba(43, 58, 80, 0.5);
   box-sizing: border-box;
   color: #bfdbfe;
   font-size: 0.78rem;
@@ -1386,6 +1422,35 @@ button:disabled {
   color: #64748b;
 }
 
+.column-resize-handle {
+  background: transparent;
+  border: 0;
+  bottom: 0;
+  cursor: col-resize;
+  padding: 0;
+  position: absolute;
+  right: -4px;
+  top: 0;
+  width: 9px;
+  z-index: 3;
+}
+
+.column-resize-handle::after {
+  background: transparent;
+  bottom: 8px;
+  content: "";
+  left: 4px;
+  position: absolute;
+  top: 8px;
+  width: 1px;
+}
+
+.column-resize-handle:hover::after,
+.column-resize-handle:focus-visible::after,
+.is-column-resizing .column-resize-handle::after {
+  background: #38bdf8;
+}
+
 .virtual-body {
   display: block;
   position: relative;
@@ -1435,7 +1500,77 @@ button:disabled {
   outline: 0;
 }
 
-.data-cell:focus {
+.data-cell.is-null {
+  color: #8aa0b8;
+  font-style: italic;
+}
+
+.data-cell.editing {
+  align-items: stretch;
+  background: #f8fafc !important;
+  box-shadow: inset 0 0 0 2px #38bdf8;
+  color: #0f172a;
+  overflow: visible;
+  padding: 3px;
+  position: relative;
+  z-index: 9;
+}
+
+.data-cell.recently-updated {
+  box-shadow: inset 0 0 0 2px rgba(20, 184, 166, 0.72);
+}
+
+.cell-editor {
+  background: #ffffff;
+  border: 0;
+  border-radius: 4px;
+  color: #0f172a;
+  font: inherit;
+  min-width: 0;
+  outline: 0;
+  padding: 0 8px;
+  width: 100%;
+}
+
+.cell-editor.checkbox {
+  align-self: center;
+  height: 18px;
+  justify-self: flex-start;
+  margin: 0 8px;
+  width: 18px;
+}
+
+.cell-editor.textarea {
+  bottom: auto;
+  box-shadow: 0 18px 42px rgba(2, 6, 23, 0.28);
+  left: 0;
+  line-height: 1.45;
+  min-height: 110px;
+  padding: 8px;
+  position: absolute;
+  resize: both;
+  top: 0;
+  white-space: pre-wrap;
+  z-index: 12;
+}
+
+.cell-edit-error {
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  border-radius: 4px;
+  color: #991b1b;
+  font-size: 0.74rem;
+  left: 3px;
+  max-width: min(360px, 90vw);
+  padding: 5px 7px;
+  position: absolute;
+  top: calc(100% + 4px);
+  white-space: normal;
+  z-index: 13;
+}
+
+.data-cell:focus,
+.data-cell.selected {
   background: rgba(37, 99, 235, 0.18);
   box-shadow: inset 0 0 0 2px #38bdf8;
   color: #ffffff;
@@ -1450,10 +1585,35 @@ button:disabled {
 }
 
 .virtual-row:nth-child(even) .data-cell:focus,
-.virtual-row:hover .data-cell:focus {
+.virtual-row:hover .data-cell:focus,
+.virtual-row:nth-child(even) .data-cell.selected,
+.virtual-row:hover .data-cell.selected {
   background: rgba(37, 99, 235, 0.18);
 }
 
+.cell-full-popover {
+  background: #f8fafc;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  box-shadow: 0 18px 42px rgba(2, 6, 23, 0.34);
+  color: #0f172a;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  padding: 9px 11px;
+  pointer-events: none;
+  position: fixed;
+  white-space: normal;
+  z-index: 40;
+}
+
+.cell-full-popover.selection {
+  border-color: #38bdf8;
+}
+
+.cell-full-popover.hidden {
+  display: none;
+}
 
 .empty-cell {
   color: #93a4ba;

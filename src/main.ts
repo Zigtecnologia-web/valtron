@@ -94,7 +94,9 @@ type TableStats = {
 
 type TablePage = {
   columns: string[];
-  rows: string[][];
+  column_types?: Record<string, string>;
+  rows: CellValue[][];
+  row_ids?: Array<number | null>;
   total_rows: number;
   offset: number;
   limit: number;
@@ -127,7 +129,45 @@ type CellPosition = {
   column: number;
 };
 
+type CellValue = string | null;
+
 type ExportFormat = "csv" | "tsv" | "xlsx";
+
+type VisibleColumnEntry = {
+  column: string;
+  index: number;
+};
+
+type ColumnPreferences = {
+  width?: number;
+  hidden?: boolean;
+  order?: number;
+  pinned?: "left" | "right" | null;
+  wrap?: boolean;
+};
+
+type SelectedCellState = CellPosition & {
+  rowId: string;
+  columnName: string;
+  value: CellValue;
+};
+
+type ActiveCellEdit = SelectedCellState & {
+  originalValue: CellValue;
+  value: CellValue;
+  draft: string;
+  operationId: number;
+  status: "editing" | "saving";
+  error: string | null;
+};
+
+type ResizeState = {
+  pointerId: number;
+  visibleIndex: number;
+  columnName: string;
+  startX: number;
+  startWidth: number;
+};
 
 const PAGE_SIZE = 100;
 const GRID_BATCH_SIZE = PAGE_SIZE;
@@ -135,8 +175,20 @@ const GRID_ROW_HEIGHT = 42;
 const GRID_OVERSCAN_ROWS = 8;
 const GRID_PREFETCH_RATIO = 0.75;
 const GRID_MAX_CACHED_BATCHES = 5;
+const GRID_ROW_NUMBER_WIDTH = 72;
 const FILTER_DEBOUNCE_MS = 275;
 const COLUMN_VISIBILITY_STORAGE_PREFIX = "valtron.columnVisibility.v1";
+const COLUMN_WIDTH_STORAGE_PREFIX = "valtron.columnWidths.v1";
+const COLUMN_WIDTH_CONFIG = {
+  min: 80,
+  default: 180,
+  maxInitial: 400,
+  maxAutoFit: 500,
+  resizeMax: 900,
+  headerPadding: 58,
+  cellPadding: 28,
+  autoFitSampleSize: 500,
+};
 
 let currentOffset = 0;
 let currentPage: TablePage | null = null;
@@ -173,11 +225,22 @@ let updateInProgress = false;
 let columnSettingsOpen = false;
 let gridRequestSeq = 0;
 let gridSignature = "";
-let gridRowsCache = new Map<number, string[][]>();
+let gridRowsCache = new Map<number, CellValue[][]>();
+let gridRowIdsCache = new Map<number, Array<number | null>>();
 let gridLoadingOffsets = new Set<number>();
 let gridKnownTotalRows = 0;
 let gridRenderFrame = 0;
 let gridLoading = false;
+let columnPreferences = new Map<string, ColumnPreferences>();
+let selectedCell: SelectedCellState | null = null;
+let activeCellEdit: ActiveCellEdit | null = null;
+let cellEditSeq = 0;
+const recentCellUpdates = new Map<string, number>();
+let cellPopoverEl: HTMLDivElement | null = null;
+let activePopoverMode: "selection" | "hover" | null = null;
+let resizeState: ResizeState | null = null;
+let measureContext: CanvasRenderingContext2D | null = null;
+let pendingCellOperations = new Map<string, number>();
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -859,6 +922,66 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#039;");
 }
 
+function cellDisplayValue(value: CellValue) {
+  return value === null ? "NULL" : value;
+}
+
+function cellDraftValue(value: CellValue) {
+  return value === null ? "" : value;
+}
+
+function normalizedColumnType(columnName: string) {
+  return (currentPage?.column_types?.[columnName] ?? "VARCHAR").toUpperCase();
+}
+
+function editorInputType(columnName: string) {
+  const dataType = normalizedColumnType(columnName);
+
+  if (dataType.includes("BOOL")) return "checkbox";
+  if (dataType.includes("DATE") && !dataType.includes("TIME")) return "date";
+  if (dataType.includes("TIMESTAMP") || dataType.includes("DATETIME")) return "datetime-local";
+  if (
+    dataType.includes("INT") ||
+    dataType.includes("DECIMAL") ||
+    dataType.includes("NUMERIC") ||
+    dataType.includes("DOUBLE") ||
+    dataType.includes("FLOAT") ||
+    dataType.includes("REAL")
+  ) {
+    return "number";
+  }
+
+  return "text";
+}
+
+function cellCacheKey(rowId: string, columnName: string) {
+  return `${rowId}\u0000${columnName}`;
+}
+
+function isSameCell(a: Pick<SelectedCellState, "rowId" | "columnName"> | null, b: Pick<SelectedCellState, "rowId" | "columnName"> | null) {
+  return Boolean(a && b && a.rowId === b.rowId && a.columnName === b.columnName);
+}
+
+function rowIdForVisibleRow(rowIndex: number) {
+  const offset = batchOffsetForRow(rowIndex);
+  const rowIds = gridRowIdsCache.get(offset);
+  const rowId = rowIds?.[rowIndex - offset];
+  return rowId === null || rowId === undefined ? "" : String(rowId);
+}
+
+function updateCachedCell(rowIndex: number, visibleColumnIndex: number, value: CellValue) {
+  const offset = batchOffsetForRow(rowIndex);
+  const rows = gridRowsCache.get(offset);
+  const row = rows?.[rowIndex - offset];
+
+  if (!row || visibleColumnIndex < 0 || visibleColumnIndex >= row.length) {
+    return false;
+  }
+
+  row[visibleColumnIndex] = value;
+  return true;
+}
+
 function highlightSql(value: string) {
   return escapeHtml(value)
     .replace(
@@ -1046,11 +1169,134 @@ function writeHiddenColumns(documentId: string, hiddenColumns: Set<string>) {
   localStorage.setItem(key, JSON.stringify(Array.from(hiddenColumns)));
 }
 
+function columnWidthStorageKey() {
+  const scope =
+    dataMode === "sql"
+      ? `sql.${currentSqlQuery ?? ""}`
+      : currentDocumentId
+        ? `document.${currentDocumentId}`
+        : "empty";
+
+  return `${COLUMN_WIDTH_STORAGE_PREFIX}.${scope}`;
+}
+
+function clampColumnWidth(width: number, max = COLUMN_WIDTH_CONFIG.resizeMax) {
+  return Math.round(Math.min(max, Math.max(COLUMN_WIDTH_CONFIG.min, width)));
+}
+
+function readColumnPreferences() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(columnWidthStorageKey()) ?? "{}");
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return new Map<string, ColumnPreferences>();
+    }
+
+    return new Map(
+      Object.entries(parsed)
+        .filter((entry): entry is [string, ColumnPreferences] => {
+          const [, value] = entry;
+          return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+        })
+        .map(([column, preference]) => [
+          column,
+          {
+            ...preference,
+            width:
+              typeof preference.width === "number"
+                ? clampColumnWidth(preference.width)
+                : undefined,
+          },
+        ]),
+    );
+  } catch (error) {
+    console.error("Falha ao ler larguras das colunas.", error);
+    return new Map<string, ColumnPreferences>();
+  }
+}
+
+function writeColumnPreferences() {
+  const entries = Array.from(columnPreferences.entries()).filter(([, preference]) =>
+    Object.values(preference).some((value) => value !== undefined && value !== null),
+  );
+
+  if (entries.length === 0) {
+    localStorage.removeItem(columnWidthStorageKey());
+    return;
+  }
+
+  localStorage.setItem(columnWidthStorageKey(), JSON.stringify(Object.fromEntries(entries)));
+}
+
+function normalizeColumnName(column: string) {
+  return column
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function inferredInitialColumnWidth(column: string) {
+  const normalized = normalizeColumnName(column);
+
+  if (/\b(cpf|cnpj)\b/.test(normalized)) {
+    return 140;
+  }
+
+  if (normalized.includes("municipio") || normalized.includes("cidade")) {
+    return 180;
+  }
+
+  if (normalized.includes("descricao") || normalized.includes("observacao") || normalized.includes("historico")) {
+    return 320;
+  }
+
+  if (normalized.includes("nome") || normalized.includes("razao")) {
+    return 280;
+  }
+
+  const estimated = Math.max(COLUMN_WIDTH_CONFIG.default, column.length * 9 + COLUMN_WIDTH_CONFIG.headerPadding);
+  return clampColumnWidth(estimated, COLUMN_WIDTH_CONFIG.maxInitial);
+}
+
+function columnWidth(column: string) {
+  return columnPreferences.get(column)?.width ?? inferredInitialColumnWidth(column);
+}
+
+function setColumnWidth(column: string, width: number, persist = true) {
+  const previous = columnPreferences.get(column) ?? {};
+  columnPreferences.set(column, {
+    ...previous,
+    width: clampColumnWidth(width),
+  });
+
+  if (persist) {
+    writeColumnPreferences();
+  }
+}
+
+function gridColumnsWidth(visibleColumns: VisibleColumnEntry[]) {
+  return visibleColumns.reduce((total, { column }) => total + columnWidth(column), GRID_ROW_NUMBER_WIDTH);
+}
+
+function applyGridColumnWidths(visibleColumns: VisibleColumnEntry[]) {
+  if (!tableViewportEl || !tableHeadEl || !tableBodyEl) {
+    return;
+  }
+
+  visibleColumns.forEach(({ column }, visibleIndex) => {
+    tableViewportEl.style.setProperty(`--grid-col-${visibleIndex}`, `${columnWidth(column)}px`);
+  });
+
+  const minWidth = `${gridColumnsWidth(visibleColumns)}px`;
+  tableHeadEl.style.minWidth = minWidth;
+  tableBodyEl.style.minWidth = minWidth;
+}
+
 function hiddenColumnsForCurrentGrid() {
   return dataMode === "document" ? readHiddenColumns(currentDocumentId) : new Set<string>();
 }
 
-function visibleColumnEntries(page: TablePage) {
+function visibleColumnEntries(page: TablePage): VisibleColumnEntry[] {
   const hiddenColumns = hiddenColumnsForCurrentGrid();
   const entries = page.columns
     .map((column, index) => ({ column, index }))
@@ -1070,10 +1316,14 @@ function currentVisibleColumnNames() {
 function resetGridCache() {
   gridRequestSeq += 1;
   gridRowsCache = new Map();
+  gridRowIdsCache = new Map();
   gridLoadingOffsets = new Set();
   gridKnownTotalRows = 0;
   gridSignature = "";
   gridLoading = false;
+  selectedCell = null;
+  activeCellEdit = null;
+  hideCellPopover();
   if (tableViewportEl) tableViewportEl.scrollTop = 0;
 }
 
@@ -1105,6 +1355,7 @@ function pruneGridCache(anchorOffset: number) {
       Math.abs(offset - anchorOffset) > Math.abs(selected - anchorOffset) ? offset : selected,
     offsets[0]);
     gridRowsCache.delete(farthest);
+    gridRowIdsCache.delete(farthest);
     offsets.splice(offsets.indexOf(farthest), 1);
   }
 }
@@ -1150,6 +1401,14 @@ function renameColumnInLocalState(oldColumn: string, newColumn: string) {
 
   if (sortColumn === oldColumn) {
     sortColumn = newColumn;
+  }
+
+  const columnPreference = columnPreferences.get(oldColumn);
+
+  if (columnPreference) {
+    columnPreferences.delete(oldColumn);
+    columnPreferences.set(newColumn, columnPreference);
+    writeColumnPreferences();
   }
 
   if (currentSummary) {
@@ -1854,6 +2113,325 @@ async function moveCellFocus(position: CellPosition, direction: "next-column" | 
   window.setTimeout(() => restorePendingCellFocus(), 0);
 }
 
+function measureTextWidth(value: string) {
+  if (!measureContext) {
+    const canvas = document.createElement("canvas");
+    measureContext = canvas.getContext("2d");
+  }
+
+  if (!measureContext) {
+    return value.length * 8;
+  }
+
+  const font =
+    tableBodyEl && window.getComputedStyle(tableBodyEl).font
+      ? window.getComputedStyle(tableBodyEl).font
+      : "14px system-ui";
+  measureContext.font = font;
+  return measureContext.measureText(value).width;
+}
+
+function autoFitColumnWidth(visibleIndex: number, columnName: string) {
+  const sampleValues = [columnName];
+
+  for (const rows of gridRowsCache.values()) {
+    for (const row of rows) {
+      if (sampleValues.length >= COLUMN_WIDTH_CONFIG.autoFitSampleSize + 1) {
+        break;
+      }
+
+      sampleValues.push(cellDisplayValue(row[visibleIndex] ?? null));
+    }
+  }
+
+  if (selectedCell?.columnName === columnName) {
+    sampleValues.push(cellDisplayValue(selectedCell.value));
+  }
+
+  const widest = sampleValues.reduce(
+    (width, value, index) =>
+      Math.max(width, measureTextWidth(value) + (index === 0 ? COLUMN_WIDTH_CONFIG.headerPadding : COLUMN_WIDTH_CONFIG.cellPadding)),
+    0,
+  );
+
+  return clampColumnWidth(widest, COLUMN_WIDTH_CONFIG.maxAutoFit);
+}
+
+function isCellTruncated(cell: HTMLElement) {
+  return cell.scrollWidth > cell.clientWidth + 1;
+}
+
+function ensureCellPopover() {
+  if (!cellPopoverEl) {
+    cellPopoverEl = document.createElement("div");
+    cellPopoverEl.className = "cell-full-popover hidden";
+    cellPopoverEl.setAttribute("role", "tooltip");
+    document.body.appendChild(cellPopoverEl);
+  }
+
+  return cellPopoverEl;
+}
+
+function positionCellPopover(cell: HTMLElement, popover: HTMLElement) {
+  const rect = cell.getBoundingClientRect();
+  const viewportPadding = 8;
+  const maxWidth = Math.min(720, window.innerWidth - viewportPadding * 2);
+
+  popover.style.maxWidth = `${maxWidth}px`;
+  popover.style.left = `${Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - viewportPadding)}px`;
+  popover.style.top = `${Math.min(window.innerHeight - viewportPadding, rect.bottom + 6)}px`;
+
+  const popoverRect = popover.getBoundingClientRect();
+  const overflowRight = popoverRect.right - window.innerWidth + viewportPadding;
+
+  if (overflowRight > 0) {
+    popover.style.left = `${Math.max(viewportPadding, rect.left - overflowRight)}px`;
+  }
+
+  if (popoverRect.bottom > window.innerHeight - viewportPadding) {
+    popover.style.top = `${Math.max(viewportPadding, rect.top - popoverRect.height - 6)}px`;
+  }
+}
+
+function showCellPopover(cell: HTMLElement, value: string, mode: "selection" | "hover") {
+  if (!value || !isCellTruncated(cell)) {
+    if (mode === "selection") {
+      hideCellPopover();
+    }
+    return;
+  }
+
+  const popover = ensureCellPopover();
+  activePopoverMode = mode;
+  popover.textContent = value;
+  popover.classList.toggle("selection", mode === "selection");
+  popover.classList.remove("hidden");
+  positionCellPopover(cell, popover);
+}
+
+function hideCellPopover(mode?: "selection" | "hover") {
+  if (mode && activePopoverMode !== mode) {
+    return;
+  }
+
+  cellPopoverEl?.classList.add("hidden");
+  activePopoverMode = null;
+}
+
+function cellStateFromElement(cell: HTMLElement): SelectedCellState | null {
+  const row = Number(cell.dataset.cellRow);
+  const column = Number(cell.dataset.cellColumn);
+  const rowId = cell.dataset.valtronRowId ?? "";
+  const columnName = cell.dataset.cellColumnName ?? "";
+
+  if (!Number.isInteger(row) || !Number.isInteger(column) || !rowId || !columnName) {
+    return null;
+  }
+
+  const cachedValue = cachedRow(row)?.[column] ?? null;
+
+  return {
+    row,
+    column,
+    rowId,
+    columnName,
+    value: cachedValue,
+  };
+}
+
+function selectCell(cell: HTMLElement, showFullValue = true) {
+  const state = cellStateFromElement(cell);
+
+  if (!state) {
+    return;
+  }
+
+  selectedCell = state;
+  tableBodyEl
+    ?.querySelectorAll(".data-cell.selected")
+    .forEach((item) => item.classList.remove("selected"));
+  cell.classList.add("selected");
+
+  if (showFullValue) {
+    showCellPopover(cell, cellDisplayValue(state.value), "selection");
+  }
+}
+
+function activeEditPosition(): CellPosition | null {
+  return activeCellEdit ? { row: activeCellEdit.row, column: activeCellEdit.column } : null;
+}
+
+function focusActiveCellEditor() {
+  if (!activeCellEdit || activeCellEdit.status !== "editing") {
+    return;
+  }
+
+  const editor = tableBodyEl?.querySelector<HTMLInputElement | HTMLTextAreaElement>("[data-cell-editor]");
+
+  if (!editor || document.activeElement === editor) {
+    return;
+  }
+
+  editor.focus({ preventScroll: true });
+  editor.setSelectionRange(editor.value.length, editor.value.length);
+}
+
+function startCellEdit(cell: HTMLElement) {
+  if (dataMode !== "document") {
+    setStatus("Edicao disponivel apenas em documentos importados.");
+    return;
+  }
+
+  const state = cellStateFromElement(cell);
+
+  if (!state) {
+    setStatus("Celula sem ID interno para edicao.");
+    return;
+  }
+
+  activeCellEdit = {
+    ...state,
+    originalValue: state.value,
+    value: state.value,
+    draft: cellDraftValue(state.value),
+    operationId: ++cellEditSeq,
+    status: "editing",
+    error: null,
+  };
+  selectedCell = state;
+  hideCellPopover();
+  renderVirtualRows();
+}
+
+function cancelActiveCellEdit(render = true) {
+  activeCellEdit = null;
+
+  if (render) {
+    renderVirtualRows();
+    if (selectedCell) {
+      window.setTimeout(() => focusCell(selectedCell as CellPosition), 0);
+    }
+  }
+}
+
+function updateActiveEditDraft(value: string) {
+  if (!activeCellEdit || activeCellEdit.status !== "editing") {
+    return;
+  }
+
+  activeCellEdit = {
+    ...activeCellEdit,
+    draft: value,
+    value,
+    error: null,
+  };
+}
+
+async function commitActiveCellEdit(renderOnNoop = true) {
+  if (!activeCellEdit || activeCellEdit.status === "saving") {
+    return true;
+  }
+
+  if (!currentDocumentId) {
+    activeCellEdit.error = "Documento nao encontrado.";
+    renderVirtualRows();
+    return false;
+  }
+
+  const edit = activeCellEdit;
+  const newValue: CellValue = edit.draft;
+
+  if (edit.originalValue === newValue) {
+    activeCellEdit = null;
+    if (renderOnNoop) renderVirtualRows();
+    return true;
+  }
+
+  const operationId = ++cellEditSeq;
+  const operationKey = cellCacheKey(edit.rowId, edit.columnName);
+  pendingCellOperations.set(operationKey, operationId);
+  activeCellEdit = {
+    ...edit,
+    value: newValue,
+    operationId,
+    status: "saving",
+    error: null,
+  };
+
+  updateCachedCell(edit.row, edit.column, newValue);
+  selectedCell = { ...edit, value: newValue };
+  renderVirtualRows();
+
+  try {
+    await invoke("update_document_cell", {
+      documentId: currentDocumentId,
+      rowId: Number(edit.rowId),
+      column: edit.columnName,
+      value: newValue,
+    });
+
+    if (pendingCellOperations.get(operationKey) !== operationId) {
+      return true;
+    }
+
+    pendingCellOperations.delete(operationKey);
+    recentCellUpdates.set(operationKey, Date.now() + 1200);
+    activeCellEdit = null;
+    renderVirtualRows();
+    window.setTimeout(() => {
+      if ((recentCellUpdates.get(operationKey) ?? 0) <= Date.now()) {
+        recentCellUpdates.delete(operationKey);
+        renderVirtualRows();
+      }
+    }, 1300);
+    setStatus("Celula atualizada.");
+    return true;
+  } catch (error) {
+    if (pendingCellOperations.get(operationKey) !== operationId) {
+      return false;
+    }
+
+    pendingCellOperations.delete(operationKey);
+    updateCachedCell(edit.row, edit.column, edit.originalValue);
+    selectedCell = { ...edit, value: edit.originalValue };
+    activeCellEdit = {
+      ...edit,
+      status: "editing",
+      error: String(error),
+    };
+    renderVirtualRows();
+    setStatus(String(error));
+    return false;
+  }
+}
+
+async function resolveActiveCellEditBeforeGridChange() {
+  if (!activeCellEdit) {
+    return true;
+  }
+
+  if (activeCellEdit.status === "saving") {
+    return false;
+  }
+
+  return commitActiveCellEdit(false);
+}
+
+function repositionSelectedCellPopover() {
+  if (!selectedCell || activePopoverMode !== "selection") {
+    return;
+  }
+
+  const cell = findCell(selectedCell);
+
+  if (!cell) {
+    hideCellPopover("selection");
+    return;
+  }
+
+  showCellPopover(cell, cellDisplayValue(selectedCell.value), "selection");
+}
+
 function renderSummary(summary: ImportSummary | null, page: TablePage | null = currentPage) {
   const document = selectedDocument();
 
@@ -2023,9 +2601,7 @@ function renderTable(page: TablePage | null) {
   gridKnownTotalRows = page.total_rows;
   const visibleColumns = visibleColumnEntries(page);
   const gridTemplateColumns = gridColumnTemplate(visibleColumns.length);
-  const gridMinWidth = gridContentMinWidth(visibleColumns.length);
-  tableHeadEl.style.minWidth = gridMinWidth;
-  tableBodyEl.style.minWidth = gridMinWidth;
+  applyGridColumnWidths(visibleColumns);
 
   tableHeadEl.innerHTML = `
     <div class="grid-header-row" style="grid-template-columns: ${gridTemplateColumns};">
@@ -2034,8 +2610,8 @@ function renderTable(page: TablePage | null) {
       </div>
       ${visibleColumns
         .map(
-          ({ column, index }) => `
-            <div class="grid-header-cell">
+          ({ column, index }, visibleIndex) => `
+            <div class="grid-header-cell" data-header-visible-column="${visibleIndex}" data-header-column="${escapeHtml(column)}">
               <div class="column-header">
                 ${
                   dataMode === "document"
@@ -2050,6 +2626,14 @@ function renderTable(page: TablePage | null) {
                   <strong>${sortIndicator(column)}</strong>
                 </button>
               </div>
+              <button
+                class="column-resize-handle"
+                type="button"
+                data-resize-visible-column="${visibleIndex}"
+                data-resize-column="${escapeHtml(column)}"
+                aria-label="Redimensionar ${escapeHtml(column)}"
+                title="Arraste para redimensionar. Duplo clique ajusta ao conteudo visivel."
+              ></button>
             </div>
           `,
         )
@@ -2090,11 +2674,8 @@ function renderTable(page: TablePage | null) {
 }
 
 function gridColumnTemplate(visibleColumnCount: number) {
-  return `72px repeat(${Math.max(0, visibleColumnCount)}, minmax(180px, 1fr))`;
-}
-
-function gridContentMinWidth(visibleColumnCount: number) {
-  return `${72 + Math.max(0, visibleColumnCount) * 180}px`;
+  const columns = Array.from({ length: Math.max(0, visibleColumnCount) }, (_item, index) => `var(--grid-col-${index}, ${COLUMN_WIDTH_CONFIG.default}px)`);
+  return [`${GRID_ROW_NUMBER_WIDTH}px`, ...columns].join(" ");
 }
 
 function renderVirtualRows() {
@@ -2106,11 +2687,10 @@ function renderVirtualRows() {
   const { start, end } = visibleRowBounds();
   const renderedRows: string[] = [];
   const gridTemplateColumns = gridColumnTemplate(visibleColumns.length);
-  const gridMinWidth = gridContentMinWidth(visibleColumns.length);
+  applyGridColumnWidths(visibleColumns);
 
   tableBodyEl.classList.add("virtual-body");
   tableBodyEl.style.height = `${Math.max(1, gridKnownTotalRows) * GRID_ROW_HEIGHT}px`;
-  tableBodyEl.style.minWidth = gridMinWidth;
 
   if (gridKnownTotalRows === 0) {
     tableBodyEl.innerHTML = `
@@ -2134,14 +2714,47 @@ function renderVirtualRows() {
         <div class="row-number-cell" aria-label="Linha ${formatNumber(rowIndex + 1)}">${formatNumber(rowIndex + 1)}</div>
         ${visibleColumns
           .map(
-            (_entry, visibleIndex) => `
+            ({ column }, visibleIndex) => {
+              const value = row[visibleIndex] ?? null;
+              const rowId = rowIdForVisibleRow(rowIndex);
+              const selected = selectedCell?.row === rowIndex && selectedCell.column === visibleIndex;
+              const editing = Boolean(
+                activeCellEdit &&
+                  activeCellEdit.rowId === rowId &&
+                  activeCellEdit.columnName === column,
+              );
+              const recentlyUpdated = rowId
+                ? (recentCellUpdates.get(cellCacheKey(rowId, column)) ?? 0) > Date.now()
+                : false;
+              const displayValue = cellDisplayValue(value);
+              const editable = dataMode === "document" && Boolean(rowId);
+              const error = editing ? activeCellEdit?.error : null;
+              const inputType = editorInputType(column);
+              const editor =
+                editing && activeCellEdit
+                  ? inputType === "checkbox"
+                    ? `<input class="cell-editor checkbox" data-cell-editor type="checkbox" ${/^(true|1|sim|yes)$/i.test(activeCellEdit.draft) ? "checked" : ""} ${activeCellEdit.status === "saving" ? "disabled" : ""} />`
+                    : activeCellEdit.draft.length > 120 || columnWidth(column) >= 300
+                    ? `<textarea class="cell-editor textarea" data-cell-editor spellcheck="false" ${activeCellEdit.status === "saving" ? "disabled" : ""}>${escapeHtml(activeCellEdit.draft)}</textarea>`
+                    : `<input class="cell-editor" data-cell-editor type="${inputType}" value="${escapeHtml(activeCellEdit.draft)}" ${activeCellEdit.status === "saving" ? "disabled" : ""} />`
+                  : "";
+
+              return `
               <div
-                class="data-cell"
+                class="data-cell ${selected ? "selected" : ""} ${editing ? "editing" : ""} ${recentlyUpdated ? "recently-updated" : ""} ${value === null ? "is-null" : ""}"
                 tabindex="0"
                 data-cell-row="${rowIndex}"
                 data-cell-column="${visibleIndex}"
-              >${escapeHtml(row[visibleIndex] ?? "")}</div>
-            `,
+                data-valtron-row-id="${escapeHtml(rowId)}"
+                data-cell-column-name="${escapeHtml(column)}"
+                aria-readonly="${editable ? "false" : "true"}"
+              >${
+                editing
+                  ? `${editor}${error ? `<span class="cell-edit-error">${escapeHtml(error)}</span>` : ""}`
+                  : escapeHtml(displayValue)
+              }</div>
+            `;
+            },
           )
           .join("")}
       </div>
@@ -2149,6 +2762,8 @@ function renderVirtualRows() {
   }
 
   tableBodyEl.innerHTML = renderedRows.join("");
+  focusActiveCellEditor();
+  repositionSelectedCellPopover();
   pageRangeEl.textContent =
     end <= start ? "0" : `${formatNumber(start + 1)}-${formatNumber(Math.min(end, gridKnownTotalRows))}`;
 }
@@ -2207,6 +2822,7 @@ async function loadWindow(offset: number, requestSeq: number, signature: string)
     sortDirection = page.sort_direction;
     gridKnownTotalRows = page.total_rows;
     gridRowsCache.set(page.offset, page.rows);
+    gridRowIdsCache.set(page.offset, page.row_ids ?? page.rows.map(() => null));
     pruneGridCache(page.offset);
     renderSummary(currentSummary, currentPage);
     renderTable(currentPage);
@@ -2250,6 +2866,11 @@ function ensureVisibleRowsLoaded() {
 }
 
 async function loadPage(offset: number) {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   if (dataMode === "document" && !currentDocumentId) {
     renderSummary(null, null);
     renderTable(null);
@@ -2263,6 +2884,7 @@ async function loadPage(offset: number) {
   }
 
   setStatus("Carregando dados...");
+  columnPreferences = readColumnPreferences();
   resetGridCache();
   gridSignature = gridStateSignature();
   await loadWindow(batchOffsetForRow(offset), gridRequestSeq, gridSignature);
@@ -2347,6 +2969,11 @@ async function refreshDocuments() {
 }
 
 async function selectWorkspace(workspaceId: string) {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   currentWorkspaceId = workspaceId;
   editingWorkspaceId = null;
   if (workspaceNameEl) workspaceNameEl.value = "";
@@ -2427,6 +3054,11 @@ async function createWorkspace() {
 }
 
 async function selectDocument(documentId: string) {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   dataMode = "document";
   currentSqlQuery = null;
   currentDocumentId = documentId;
@@ -2570,6 +3202,11 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activePopoverMode) {
+    hideCellPopover();
+    return;
+  }
+
   if (event.key === "Escape" && deleteDocumentId) {
     closeDeleteModal(false);
     return;
@@ -2613,6 +3250,31 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && exportDocumentId) {
     closeExport();
   }
+});
+
+document.addEventListener("pointermove", (event) => {
+  if (!resizeState || !currentPage) {
+    return;
+  }
+
+  const width = clampColumnWidth(resizeState.startWidth + event.clientX - resizeState.startX);
+  const visibleColumns = visibleColumnEntries(currentPage);
+  setColumnWidth(resizeState.columnName, width, false);
+  applyGridColumnWidths(visibleColumns);
+});
+
+document.addEventListener("pointerup", (event) => {
+  if (!resizeState) {
+    return;
+  }
+
+  if (event.pointerId !== resizeState.pointerId) {
+    return;
+  }
+
+  writeColumnPreferences();
+  document.body.classList.remove("is-column-resizing");
+  resizeState = null;
 });
 
 detailsModalEl?.addEventListener("click", (event) => {
@@ -2757,6 +3419,11 @@ runSqlButton?.addEventListener("click", async () => {
     return;
   }
 
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   runSqlButton.disabled = true;
   sqlStatusEl.textContent = "Executando consulta na grid principal...";
 
@@ -2779,6 +3446,11 @@ runSqlButton?.addEventListener("click", async () => {
 });
 
 clearSqlButton?.addEventListener("click", async () => {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   dataMode = "document";
   currentSqlQuery = null;
   currentPage = null;
@@ -2798,9 +3470,20 @@ sqlQueryEl?.addEventListener("scroll", () => {
 
 tableHeadEl?.addEventListener("click", async (event) => {
   const target = event.target as HTMLElement;
+  const resizeHandle = target.closest<HTMLButtonElement>("[data-resize-visible-column]");
+
+  if (resizeHandle) {
+    return;
+  }
+
   const editButton = target.closest<HTMLButtonElement>("[data-edit-column-index]");
 
   if (editButton) {
+    if (!(await resolveActiveCellEditBeforeGridChange())) {
+      setStatus("Aguarde a atualizacao da celula atual.");
+      return;
+    }
+
     const columnIndex = Number(editButton.dataset.editColumnIndex);
 
     if (Number.isInteger(columnIndex)) {
@@ -2818,6 +3501,11 @@ tableHeadEl?.addEventListener("click", async (event) => {
 
   const column = button.dataset.sortColumn ?? "";
 
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   if (sortColumn !== column) {
     sortColumn = column;
     sortDirection = "asc";
@@ -2831,10 +3519,62 @@ tableHeadEl?.addEventListener("click", async (event) => {
   await loadPage(0);
 });
 
-tableHeadEl?.addEventListener("input", (event) => {
+tableHeadEl?.addEventListener("pointerdown", (event) => {
+  const target = event.target as HTMLElement;
+  const resizeHandle = target.closest<HTMLButtonElement>("[data-resize-visible-column]");
+
+  if (!resizeHandle || !currentPage) {
+    return;
+  }
+
+  const visibleIndex = Number(resizeHandle.dataset.resizeVisibleColumn);
+  const columnName = resizeHandle.dataset.resizeColumn ?? "";
+
+  if (!Number.isInteger(visibleIndex) || !columnName) {
+    return;
+  }
+
+  event.preventDefault();
+  resizeHandle.setPointerCapture(event.pointerId);
+  resizeState = {
+    pointerId: event.pointerId,
+    visibleIndex,
+    columnName,
+    startX: event.clientX,
+    startWidth: columnWidth(columnName),
+  };
+  document.body.classList.add("is-column-resizing");
+});
+
+tableHeadEl?.addEventListener("dblclick", (event) => {
+  const target = event.target as HTMLElement;
+  const resizeHandle = target.closest<HTMLButtonElement>("[data-resize-visible-column]");
+
+  if (!resizeHandle || !currentPage) {
+    return;
+  }
+
+  const visibleIndex = Number(resizeHandle.dataset.resizeVisibleColumn);
+  const columnName = resizeHandle.dataset.resizeColumn ?? "";
+
+  if (!Number.isInteger(visibleIndex) || !columnName) {
+    return;
+  }
+
+  event.preventDefault();
+  setColumnWidth(columnName, autoFitColumnWidth(visibleIndex, columnName));
+  applyGridColumnWidths(visibleColumnEntries(currentPage));
+});
+
+tableHeadEl?.addEventListener("input", async (event) => {
   const target = event.target as HTMLInputElement;
 
   if (!target.matches("[data-filter-column]")) {
+    return;
+  }
+
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
     return;
   }
 
@@ -2845,6 +3585,37 @@ tableHeadEl?.addEventListener("input", (event) => {
 });
 
 tableBodyEl?.addEventListener("keydown", async (event) => {
+  const target = event.target as HTMLElement;
+  const editor = target.closest<HTMLInputElement | HTMLTextAreaElement>("[data-cell-editor]");
+
+  if (editor && activeCellEdit) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelActiveCellEdit();
+      return;
+    }
+
+    if (event.key === "Enter" && !(editor instanceof HTMLTextAreaElement && event.shiftKey)) {
+      event.preventDefault();
+      await commitActiveCellEdit();
+      return;
+    }
+
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const position = activeEditPosition();
+      const committed = await commitActiveCellEdit();
+
+      if (committed && position) {
+        await moveCellFocus(position, event.shiftKey ? "previous-column" : "next-column");
+      }
+
+      return;
+    }
+
+    return;
+  }
+
   const navigationByKey: Record<string, "next-column" | "previous-column" | "next-row" | "previous-row"> = {
     ArrowDown: "next-row",
     ArrowLeft: "previous-column",
@@ -2852,11 +3623,10 @@ tableBodyEl?.addEventListener("keydown", async (event) => {
     ArrowUp: "previous-row",
   };
 
-  if (event.key !== "Tab" && event.key !== "Enter" && !(event.key in navigationByKey)) {
+  if (event.key !== "Tab" && event.key !== "Enter" && event.key !== "F2" && !(event.key in navigationByKey)) {
     return;
   }
 
-  const target = event.target as HTMLElement;
   const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
 
   if (!cell) {
@@ -2872,6 +3642,11 @@ tableBodyEl?.addEventListener("keydown", async (event) => {
 
   event.preventDefault();
 
+  if (event.key === "Enter" || event.key === "F2") {
+    startCellEdit(cell);
+    return;
+  }
+
   await moveCellFocus(
     { row, column },
     navigationByKey[event.key] ??
@@ -2885,7 +3660,127 @@ tableBodyEl?.addEventListener("keydown", async (event) => {
   );
 });
 
-tableViewportEl?.addEventListener("scroll", scheduleVirtualRender, { passive: true });
+tableBodyEl?.addEventListener("focusin", (event) => {
+  const target = event.target as HTMLElement;
+  if (target.matches("[data-cell-editor]")) {
+    return;
+  }
+
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (cell) {
+    selectCell(cell);
+  }
+});
+
+tableBodyEl?.addEventListener("input", (event) => {
+  const target = event.target as HTMLInputElement | HTMLTextAreaElement;
+
+  if (!target.matches("[data-cell-editor]")) {
+    return;
+  }
+
+  updateActiveEditDraft(target instanceof HTMLInputElement && target.type === "checkbox" ? String(target.checked) : target.value);
+});
+
+tableBodyEl?.addEventListener("focusout", (event) => {
+  const nextTarget = event.relatedTarget;
+
+  if (nextTarget instanceof Node && tableBodyEl.contains(nextTarget)) {
+    return;
+  }
+
+  hideCellPopover("selection");
+});
+
+tableBodyEl?.addEventListener("click", async (event) => {
+  const target = event.target as HTMLElement;
+  if (target.closest("[data-cell-editor]")) {
+    return;
+  }
+
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (cell) {
+    const state = cellStateFromElement(cell);
+
+    if (activeCellEdit && state && !isSameCell(activeCellEdit, state)) {
+      const committed = await commitActiveCellEdit();
+
+      if (!committed) {
+        return;
+      }
+    }
+
+    selectCell(cell);
+  }
+});
+
+tableBodyEl?.addEventListener("dblclick", (event) => {
+  const target = event.target as HTMLElement;
+
+  if (target.closest("[data-cell-editor]")) {
+    return;
+  }
+
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (cell) {
+    startCellEdit(cell);
+  }
+});
+
+tableBodyEl?.addEventListener("pointerover", (event) => {
+  if (activePopoverMode === "selection") {
+    return;
+  }
+
+  const target = event.target as HTMLElement;
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (!cell) {
+    return;
+  }
+
+  const state = cellStateFromElement(cell);
+
+  if (state) {
+    showCellPopover(cell, cellDisplayValue(state.value), "hover");
+  }
+});
+
+tableBodyEl?.addEventListener("pointerout", (event) => {
+  if (activePopoverMode !== "hover") {
+    return;
+  }
+
+  const target = event.target as HTMLElement;
+  const cell = target.closest<HTMLElement>("[data-cell-row][data-cell-column]");
+
+  if (!cell || cell.contains(event.relatedTarget as Node | null)) {
+    return;
+  }
+
+  hideCellPopover("hover");
+});
+
+tableViewportEl?.addEventListener("scroll", () => {
+  if (activeCellEdit?.status === "editing") {
+    const { start, end } = visibleRowBounds();
+
+    if (activeCellEdit.row < start || activeCellEdit.row >= end) {
+      commitActiveCellEdit().catch((error) => setStatus(String(error)));
+      return;
+    }
+  }
+
+  scheduleVirtualRender();
+  if (activePopoverMode === "selection") {
+    window.requestAnimationFrame(repositionSelectedCellPopover);
+  } else {
+    hideCellPopover("hover");
+  }
+}, { passive: true });
 
 prevButton?.addEventListener("click", async () => {
   if (!currentPage) return;
@@ -2901,6 +3796,11 @@ nextButton?.addEventListener("click", async () => {
 });
 
 clearFiltersButton?.addEventListener("click", async () => {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
   filterValues = new Map();
   sortColumn = null;
   sortDirection = null;

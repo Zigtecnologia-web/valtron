@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     io::{BufWriter, Read, Write},
     path::PathBuf,
@@ -24,6 +25,8 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const DOCUMENTS_TABLE: &str = "imported_documents";
 const WORKSPACES_TABLE: &str = "workspaces";
+const VALTRON_ROW_ID_COLUMN: &str = "_valtron_row_id";
+const DUCKDB_ROW_ID_ALIAS: &str = "__valtron_duckdb_rowid";
 const DEFAULT_WORKSPACE_ID: &str = "default";
 const MAX_COLUMNS: usize = 16_384;
 
@@ -366,7 +369,7 @@ struct WorkspaceInfo {
 #[derive(Serialize)]
 struct TablePage {
     columns: Vec<String>,
-    rows: Vec<Vec<String>>,
+    rows: Vec<Vec<Option<String>>>,
     total_rows: usize,
     offset: usize,
     limit: usize,
@@ -389,7 +392,9 @@ struct GridPerformance {
 #[derive(Serialize)]
 struct TableWindow {
     columns: Vec<String>,
-    rows: Vec<Vec<String>>,
+    column_types: HashMap<String, String>,
+    rows: Vec<Vec<Option<String>>>,
+    row_ids: Vec<Option<i64>>,
     total_rows: usize,
     offset: usize,
     limit: usize,
@@ -400,6 +405,13 @@ struct TableWindow {
     filters: Vec<ColumnFilter>,
     stats: TableStats,
     performance: GridPerformance,
+}
+
+#[derive(Serialize)]
+struct CellUpdateResult {
+    row_id: i64,
+    column: String,
+    value: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -1023,6 +1035,13 @@ fn value_ref_to_string(value: ValueRef<'_>) -> String {
     }
 }
 
+fn value_ref_to_cell(value: ValueRef<'_>) -> Option<String> {
+    match value {
+        ValueRef::Null => None,
+        _ => Some(value_ref_to_string(value)),
+    }
+}
+
 fn validate_read_query(query: &str) -> Result<String, String> {
     let sql = query.trim().trim_end_matches(';').trim().to_string();
 
@@ -1191,6 +1210,73 @@ fn get_columns(connection: &Connection, table_name: &str) -> Result<Vec<String>,
     }
 
     Ok(columns)
+}
+
+fn get_column_data_type(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<String, String> {
+    connection
+        .query_row(
+            "SELECT data_type
+             FROM information_schema.columns
+             WHERE table_name = ? AND column_name = ?",
+            params![table_name, column_name],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| format!("Coluna nao encontrada no schema real da tabela: {error}"))
+}
+
+fn get_column_data_types(
+    connection: &Connection,
+    table_name: &str,
+    columns: &[String],
+) -> Result<HashMap<String, String>, String> {
+    let mut types = HashMap::with_capacity(columns.len());
+
+    for column in columns {
+        types.insert(
+            column.clone(),
+            get_column_data_type(connection, table_name, column)?,
+        );
+    }
+
+    Ok(types)
+}
+
+fn is_textual_type(data_type: &str) -> bool {
+    let normalized = data_type.to_ascii_uppercase();
+    normalized.contains("CHAR")
+        || normalized == "TEXT"
+        || normalized == "STRING"
+        || normalized == "VARCHAR"
+        || normalized == "UUID"
+}
+
+fn validate_cell_value_type(
+    connection: &Connection,
+    data_type: &str,
+    value: Option<&str>,
+) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+
+    if is_textual_type(data_type) {
+        return Ok(());
+    }
+
+    let sql = format!("SELECT TRY_CAST(? AS {data_type}) IS NOT NULL");
+    let is_valid = connection
+        .query_row(&sql, params![value], |row| row.get::<_, bool>(0))
+        .map_err(|error| format!("Nao foi possivel validar o tipo da celula: {error}"))?;
+
+    if !is_valid {
+        return Err(format!("Valor invalido para coluna do tipo {data_type}."));
+    }
+
+    Ok(())
 }
 
 fn sanitize_filters(filters: Vec<ColumnFilter>, columns: &[String]) -> Vec<ColumnFilter> {
@@ -1384,7 +1470,7 @@ fn get_page_from_source(
             let value = row
                 .get_ref(index)
                 .map_err(|error| format!("Nao foi possivel ler a coluna {}: {error}", index + 1))?;
-            values.push(value_ref_to_string(value));
+            values.push(value_ref_to_cell(value));
         }
 
         rows.push(values);
@@ -1401,15 +1487,6 @@ fn get_page_from_source(
         filters: active_filters,
         stats,
     })
-}
-
-fn empty_stats(column_count: usize) -> TableStats {
-    TableStats {
-        column_count,
-        columns_with_empty: 0,
-        empty_cells: 0,
-        quality: Vec::new(),
-    }
 }
 
 fn selected_columns(all_columns: &[String], requested_columns: &[String]) -> Vec<String> {
@@ -1438,6 +1515,8 @@ fn get_window_from_source(
     connection: &Connection,
     source_sql: &str,
     columns: Vec<String>,
+    column_types: HashMap<String, String>,
+    row_id_projection: Option<String>,
     offset: usize,
     limit: usize,
     filters: Vec<ColumnFilter>,
@@ -1455,6 +1534,10 @@ fn get_window_from_source(
         build_order_clause(sort_column, sort_direction, &columns);
     let selected_columns = selected_columns(&columns, &visible_columns);
     let projection = projection_sql(&selected_columns);
+    let row_id_select = row_id_projection
+        .as_ref()
+        .map(|projection| format!("{projection}, "))
+        .unwrap_or_default();
     let filter_refs = filter_values
         .iter()
         .map(|value| value as &dyn ToSql)
@@ -1471,7 +1554,7 @@ fn get_window_from_source(
         .max(0) as usize;
 
     let sql = format!(
-        "SELECT {projection} FROM ({source_sql}) AS source_query{where_clause}{order_clause} LIMIT ? OFFSET ?"
+        "SELECT {row_id_select}{projection} FROM ({source_sql}) AS source_query{where_clause}{order_clause} LIMIT ? OFFSET ?"
     );
     let mut statement = connection
         .prepare(&sql)
@@ -1491,20 +1574,31 @@ fn get_window_from_source(
 
     let rust_start = Instant::now();
     let mut rows = Vec::new();
+    let mut row_ids = Vec::new();
 
     while let Some(row) = query
         .next()
         .map_err(|error| format!("Nao foi possivel ler uma linha: {error}"))?
     {
+        let row_id = if row_id_projection.is_some() {
+            Some(
+                row.get::<_, i64>(0)
+                    .map_err(|error| format!("Nao foi possivel ler o ID interno da linha: {error}"))?,
+            )
+        } else {
+            None
+        };
+        let first_value_index = usize::from(row_id_projection.is_some());
         let mut values = Vec::with_capacity(selected_columns.len());
 
         for index in 0..selected_columns.len() {
             let value = row
-                .get_ref(index)
+                .get_ref(first_value_index + index)
                 .map_err(|error| format!("Nao foi possivel ler a coluna {}: {error}", index + 1))?;
-            values.push(value_ref_to_string(value));
+            values.push(value_ref_to_cell(value));
         }
 
+        row_ids.push(row_id);
         rows.push(values);
     }
 
@@ -1529,11 +1623,13 @@ fn get_window_from_source(
         performance.limit
     );
 
-    let column_count = columns.len();
+    let stats = get_source_stats(connection, source_sql, &columns)?;
 
     Ok(TableWindow {
         columns,
+        column_types,
         rows,
+        row_ids,
         total_rows,
         offset: safe_offset,
         limit: safe_limit,
@@ -1542,7 +1638,7 @@ fn get_window_from_source(
         sort_column: safe_sort_column,
         sort_direction: safe_sort_direction,
         filters: active_filters,
-        stats: empty_stats(column_count),
+        stats,
         performance,
     })
 }
@@ -2866,6 +2962,57 @@ fn rename_document_column(
     get_columns(&connection, &table_name)
 }
 
+#[tauri::command]
+fn update_document_cell(
+    app: AppHandle,
+    document_id: String,
+    row_id: i64,
+    column: String,
+    value: Option<String>,
+) -> Result<CellUpdateResult, String> {
+    if row_id < 0 {
+        return Err("ID interno da linha invalido.".to_string());
+    }
+
+    let column = column.trim().to_string();
+
+    if column.is_empty() || column == VALTRON_ROW_ID_COLUMN {
+        return Err("Coluna nao editavel.".to_string());
+    }
+
+    let connection = open_database(&app)?;
+    let table_name = get_document_table(&connection, &document_id)?;
+    let columns = get_columns(&connection, &table_name)?;
+
+    if !columns.iter().any(|item| item == &column) {
+        return Err("Coluna nao existe no documento selecionado.".to_string());
+    }
+
+    let data_type = get_column_data_type(&connection, &table_name, &column)?;
+    validate_cell_value_type(&connection, &data_type, value.as_deref())?;
+
+    let updated = connection
+        .execute(
+            &format!(
+                "UPDATE {} SET {} = ? WHERE rowid = ?",
+                table_sql(&table_name),
+                quoted_identifier(&column)
+            ),
+            params![value.as_deref(), row_id],
+        )
+        .map_err(|error| format!("UPDATE falhou: {error}"))?;
+
+    if updated == 0 {
+        return Err("Linha nao encontrada para atualizacao.".to_string());
+    }
+
+    Ok(CellUpdateResult {
+        row_id,
+        column,
+        value,
+    })
+}
+
 fn write_xlsx_zip_entry(
     zip: &mut ZipWriter<fs::File>,
     options: SimpleFileOptions,
@@ -3070,10 +3217,17 @@ fn get_table_window(
     let connection = open_database(&app)?;
     let table_name = get_document_table(&connection, &document_id)?;
     let columns = get_columns(&connection, &table_name)?;
+    let column_types = get_column_data_types(&connection, &table_name, &columns)?;
     get_window_from_source(
         &connection,
-        &format!("SELECT * FROM {}", table_sql(&table_name)),
+        &format!(
+            "SELECT rowid AS {}, * FROM {}",
+            quoted_identifier(DUCKDB_ROW_ID_ALIAS),
+            table_sql(&table_name)
+        ),
         columns,
+        column_types,
+        Some(quoted_identifier(DUCKDB_ROW_ID_ALIAS)),
         offset,
         limit,
         filters,
@@ -3126,6 +3280,8 @@ fn get_sql_window(
         &connection,
         &sql,
         columns,
+        HashMap::new(),
+        None,
         offset,
         limit,
         filters,
@@ -3150,6 +3306,7 @@ pub fn run() {
             delete_document,
             rename_document,
             rename_document_column,
+            update_document_cell,
             export_document,
             get_table_page,
             get_sql_page,
