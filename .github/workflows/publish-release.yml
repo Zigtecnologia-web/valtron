@@ -50,3 +50,45 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+  normalize-latest-json:
+    needs: publish-tauri
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Corrigir URLs do updater
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release download "$TAG_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json \
+            --dir /tmp/valtron-release \
+            --clobber
+
+          gh release view "$TAG_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            > /tmp/valtron-release/assets.json
+
+          jq --slurpfile assets /tmp/valtron-release/assets.json '
+            .platforms |= with_entries(
+              .value.url as $current_url
+              | if ($current_url | startswith("https://api.github.com/")) then
+                  ($assets[0].assets[]
+                    | select(.apiUrl == $current_url)
+                    | .url) as $download_url
+                  | .value.url = $download_url
+                else
+                  .
+                end
+            )
+          ' /tmp/valtron-release/latest.json > /tmp/valtron-release/latest.fixed.json
+
+          mv /tmp/valtron-release/latest.fixed.json /tmp/valtron-release/latest.json
+
+          gh release upload "$TAG_NAME" \
+            /tmp/valtron-release/latest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
