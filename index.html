@@ -3,26 +3,33 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Valtron | Análise local de dados tabulares</title>
+    <title>Valtron | Data Preparation e Data Quality para arquivos grandes</title>
     <meta
       name="description"
-      content="Valtron é uma ferramenta desktop para importar, consultar, validar e explorar arquivos Excel e CSV localmente com DuckDB."
+      content="Explore, valide, transforme e consulte arquivos Excel e CSV grandes localmente com o Valtron."
     />
+    <meta property="og:title" content="Valtron | Data Preparation e Data Quality local" />
+    <meta
+      property="og:description"
+      content="Explore, valide, transforme e consulte arquivos Excel e CSV grandes localmente com o Valtron."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="images/valtron-interface-compacta.png" />
     <style>
       :root {
         color-scheme: dark;
-        --bg: #090d13;
-        --bg-soft: #0e141d;
-        --panel: #121a25;
-        --panel-strong: #172231;
-        --ink: #eef5ff;
-        --muted: #a8b4c5;
-        --muted-strong: #c8d3e1;
-        --line: #243245;
-        --accent: #22c55e;
-        --accent-strong: #86efac;
-        --cyan: #38bdf8;
-        --warning: #f59e0b;
+        --bg: #080b0f;
+        --bg-soft: #0d1218;
+        --panel: #111821;
+        --panel-strong: #16202b;
+        --ink: #f3f7fb;
+        --muted: #a7b1bf;
+        --muted-strong: #cbd5e1;
+        --line: #273241;
+        --accent: #2fb56f;
+        --accent-strong: #8ee6b3;
+        --blue: #67b7dc;
+        --warning: #e3a13f;
         --shadow: rgba(0, 0, 0, 0.38);
         font-family:
           Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
@@ -39,7 +46,7 @@
 
       body {
         margin: 0;
-        background: linear-gradient(180deg, #0b1119 0%, var(--bg) 46%, #070a0f 100%);
+        background: var(--bg);
         color: var(--ink);
         line-height: 1.55;
       }
@@ -50,12 +57,16 @@
 
       a {
         color: var(--accent-strong);
-        font-weight: 700;
+        font-weight: 750;
         text-decoration: none;
       }
 
       a:hover {
         text-decoration: underline;
+      }
+
+      img {
+        max-width: 100%;
       }
 
       .shell {
@@ -67,8 +78,8 @@
         position: sticky;
         top: 0;
         z-index: 10;
-        border-bottom: 1px solid rgba(36, 50, 69, 0.78);
-        background: rgba(9, 13, 19, 0.88);
+        border-bottom: 1px solid rgba(39, 50, 65, 0.82);
+        background: rgba(8, 11, 15, 0.9);
         backdrop-filter: blur(18px);
       }
 
@@ -81,18 +92,18 @@
       }
 
       .brand {
-        display: flex;
+        display: inline-flex;
         align-items: center;
         gap: 12px;
         color: var(--ink);
+        font-size: 1.05rem;
         font-weight: 850;
-        letter-spacing: 0;
       }
 
       .brand-mark {
         width: 40px;
         height: 40px;
-        border: 1px solid rgba(134, 239, 172, 0.35);
+        border: 1px solid rgba(142, 230, 179, 0.32);
         border-radius: 8px;
         background: #102319;
         object-fit: cover;
@@ -102,22 +113,63 @@
         display: flex;
         align-items: center;
         gap: 18px;
-        font-size: 0.95rem;
+        font-size: 0.94rem;
       }
 
       .nav a {
         color: var(--muted-strong);
       }
 
-      .hero {
-        padding: 72px 0 58px;
+      .nav-cta {
+        min-height: 38px;
+        padding: 8px 13px;
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        background: #163524;
+        color: var(--accent-strong);
       }
 
-      .hero-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 0.9fr) minmax(420px, 1.1fr);
-        gap: 38px;
-        align-items: center;
+      section {
+        padding: 58px 0;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        max-width: 850px;
+        margin-bottom: 20px;
+        font-size: clamp(2.7rem, 6vw, 5.5rem);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin-bottom: 12px;
+        font-size: clamp(1.85rem, 3.4vw, 3rem);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        margin-bottom: 8px;
+        font-size: 1.08rem;
+        line-height: 1.25;
+      }
+
+      .hero {
+        padding: 76px 0 40px;
+        background:
+          linear-gradient(180deg, rgba(18, 26, 35, 0.88), rgba(8, 11, 15, 0)),
+          var(--bg);
+      }
+
+      .hero-copy {
+        max-width: 900px;
       }
 
       .eyebrow {
@@ -129,33 +181,27 @@
         text-transform: uppercase;
       }
 
-      h1,
-      h2,
-      h3,
-      p {
-        margin-top: 0;
-      }
-
-      h1 {
-        margin-bottom: 18px;
-        max-width: 760px;
-        font-size: clamp(2.6rem, 5.2vw, 5.4rem);
-        line-height: 0.95;
-        letter-spacing: 0;
-      }
-
       .lead {
-        margin-bottom: 28px;
-        max-width: 650px;
+        max-width: 760px;
+        margin-bottom: 26px;
         color: var(--muted-strong);
         font-size: clamp(1.08rem, 2vw, 1.28rem);
       }
 
-      .actions {
+      .actions,
+      .small-links {
         display: flex;
         flex-wrap: wrap;
         gap: 12px;
-        margin-bottom: 28px;
+      }
+
+      .actions {
+        margin-bottom: 16px;
+      }
+
+      .small-links {
+        color: var(--muted);
+        font-size: 0.94rem;
       }
 
       .button {
@@ -168,38 +214,16 @@
         border-radius: 8px;
         background: var(--panel);
         color: var(--ink);
-        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
       }
 
       .button.primary {
-        border-color: #16a34a;
-        background: #16a34a;
+        border-color: #238b57;
+        background: #2fb56f;
         color: #04130a;
       }
 
-      .proof {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        max-width: 680px;
-      }
-
-      .proof-item {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: rgba(18, 26, 37, 0.78);
-        padding: 14px;
-      }
-
-      .proof-item strong {
-        display: block;
-        color: var(--ink);
-        font-size: 1.05rem;
-      }
-
-      .proof-item span {
-        color: var(--muted);
-        font-size: 0.9rem;
+      .screenshot-section {
+        padding-top: 22px;
       }
 
       .hero-shot,
@@ -229,94 +253,212 @@
       }
 
       .image-button:hover img {
-        transform: scale(1.012);
+        transform: scale(1.01);
       }
 
-      section {
-        padding: 48px 0;
+      .proof-grid,
+      .feature-grid,
+      .audience-grid,
+      .blog-grid,
+      .faq-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .proof-item,
+      .feature,
+      .audience,
+      .post-card,
+      .faq-item,
+      .stack-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 20px;
+      }
+
+      .proof-item strong {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--ink);
+        font-size: clamp(1.65rem, 3vw, 2.45rem);
+        line-height: 1;
+      }
+
+      .proof-item span,
+      .feature p,
+      .audience p,
+      .post-card p,
+      .faq-item p,
+      .stack-item p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .note {
+        margin: 14px 0 0;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .band {
+        border-block: 1px solid var(--line);
+        background: var(--bg-soft);
       }
 
       .section-heading {
-        max-width: 810px;
-        margin-bottom: 24px;
-      }
-
-      .section-heading h2 {
-        margin-bottom: 10px;
-        font-size: clamp(1.75rem, 3vw, 2.55rem);
-        line-height: 1.08;
-        letter-spacing: 0;
+        max-width: 820px;
+        margin-bottom: 26px;
       }
 
       .section-heading p {
         color: var(--muted);
       }
 
-      .feature-grid {
+      .flow {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 24px;
       }
 
-      .feature,
-      .stack-item {
+      .flow-step {
+        position: relative;
         border: 1px solid var(--line);
         border-radius: 8px;
-        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.72));
-        padding: 20px;
-      }
-
-      .feature h3,
-      .stack-item h3 {
-        margin-bottom: 8px;
-        font-size: 1.04rem;
-      }
-
-      .feature p,
-      .stack-item p {
-        margin-bottom: 0;
-        color: var(--muted);
-        font-size: 0.96rem;
-      }
-
-      .sales-band {
-        border-block: 1px solid var(--line);
-        background: rgba(14, 20, 29, 0.72);
-      }
-
-      .sales-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-        gap: 26px;
-        align-items: start;
-      }
-
-      .argument-list {
-        display: grid;
-        gap: 12px;
-      }
-
-      .argument {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: var(--panel-strong);
+        background: var(--panel);
         padding: 18px;
       }
 
-      .argument strong {
-        display: block;
-        margin-bottom: 4px;
+      .flow-step:not(:last-child)::after {
+        content: "→";
+        position: absolute;
+        top: 50%;
+        right: -14px;
+        z-index: 1;
+        color: var(--accent-strong);
+        font-weight: 900;
+        transform: translateY(-50%);
       }
 
-      .argument p {
+      .flow-step strong {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--accent-strong);
+        font-size: 0.82rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .flow-step p {
         margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+        gap: 32px;
+        align-items: start;
+      }
+
+      .case-panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #0b1016;
+        padding: 24px;
+      }
+
+      .case-file {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 22px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .case-file strong {
+        display: block;
+        font-size: 1.35rem;
+      }
+
+      .case-file span,
+      .case-row span,
+      .before-after span {
         color: var(--muted);
       }
 
-      .stack {
+      .case-row {
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: 120px minmax(0, 1fr);
+        gap: 18px;
+        padding: 14px 0;
+        border-bottom: 1px solid rgba(39, 50, 65, 0.7);
+      }
+
+      .case-row:last-child {
+        border-bottom: 0;
+      }
+
+      .case-row strong {
+        color: var(--blue);
+      }
+
+      .before-after {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
+        margin-top: 20px;
+      }
+
+      .before-after div {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-strong);
+        padding: 16px;
+      }
+
+      .before-after code {
+        display: block;
+        margin-top: 8px;
+        color: var(--ink);
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.95rem;
+        white-space: pre-wrap;
+      }
+
+      .local-visual {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 26px;
+      }
+
+      .machine {
+        border: 1px solid rgba(142, 230, 179, 0.35);
+        border-radius: 8px;
+        background: #0d1712;
+        padding: 24px;
+        text-align: center;
+      }
+
+      .machine-title {
+        margin-bottom: 18px;
+        color: var(--accent-strong);
+        font-size: 0.8rem;
+        font-weight: 850;
+        letter-spacing: 0.12em;
+      }
+
+      .machine-flow {
+        display: grid;
+        gap: 10px;
+        color: var(--muted-strong);
+        font-weight: 760;
       }
 
       .capture-grid {
@@ -325,49 +467,17 @@
         gap: 18px;
       }
 
-      .blog-layout {
+      .caption {
+        margin: 0;
+        padding: 14px 16px;
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+
+      .stack {
         display: grid;
-        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
-        gap: 18px;
-        align-items: start;
-      }
-
-      .post-card {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.74));
-        padding: 20px;
-        scroll-margin-top: 96px;
-      }
-
-      .post-card.featured {
-        min-height: 100%;
-        background:
-          linear-gradient(180deg, rgba(34, 197, 94, 0.12), rgba(18, 26, 37, 0.78)),
-          var(--panel);
-      }
-
-      .post-list {
-        display: grid;
-        gap: 12px;
-      }
-
-      body:not(.single-post-mode) .blog-layout {
-        grid-template-columns: 1fr;
-      }
-
-      body:not(.single-post-mode) .post-feed {
-        display: none;
-      }
-
-      body:not(.single-post-mode) .post-index {
-        position: static;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      }
-
-      .post-feed {
-        display: grid;
-        gap: 18px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
       }
 
       .post-meta {
@@ -382,143 +492,59 @@
         text-transform: uppercase;
       }
 
-      .post-permalink,
-      .blog-all-link {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: fit-content;
-        min-height: 32px;
-        border: 1px solid rgba(134, 239, 172, 0.28);
-        border-radius: 8px;
-        background: rgba(34, 197, 94, 0.08);
-        color: var(--accent-strong);
-        font-size: 0.8rem;
-        font-weight: 850;
-        padding: 5px 10px;
-      }
-
-      .post-permalink:hover,
-      .blog-all-link:hover {
-        border-color: var(--accent);
-        text-decoration: none;
-      }
-
       .post-card h3 {
-        margin-bottom: 8px;
-        font-size: clamp(1.2rem, 2vw, 1.7rem);
-        line-height: 1.12;
+        font-size: clamp(1.15rem, 2vw, 1.45rem);
       }
 
-      .post-card h4 {
-        margin: 0 0 10px;
-        color: var(--muted-strong);
-        font-size: 1rem;
-        line-height: 1.32;
+      .final-cta {
+        padding: 64px 0;
+        background: #0f171f;
       }
 
-      .post-card p {
-        margin-bottom: 0;
-        color: var(--muted);
-      }
-
-      .post-prose {
+      .final-panel {
         display: grid;
-        gap: 18px;
-      }
-
-      .post-prose h3 {
-        font-size: clamp(1.8rem, 3vw, 2.7rem);
-      }
-
-      .post-prose h4 {
-        margin-top: 8px;
-        color: var(--ink);
-        font-size: 1.14rem;
-      }
-
-      .post-prose blockquote {
-        margin: 0;
-        border-left: 4px solid var(--accent);
-        border-radius: 8px;
-        background: rgba(34, 197, 94, 0.08);
-        color: var(--muted-strong);
-        font-size: 1.04rem;
-        font-weight: 750;
-        padding: 14px 16px;
-      }
-
-      .post-prose pre {
-        margin: 0;
-        overflow-x: auto;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 24px;
+        align-items: center;
         border: 1px solid var(--line);
         border-radius: 8px;
-        background: #070b11;
-        color: #dbeafe;
-        padding: 14px 16px;
+        background: var(--panel);
+        padding: 28px;
       }
 
-      .post-prose code {
-        font-family:
-          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-        font-size: 0.9rem;
-      }
-
-      .post-next {
-        position: sticky;
-        top: 96px;
-      }
-
-      .blog-single-tools {
-        display: none;
-      }
-
-      body.single-post-mode .blog-single-tools {
-        display: block;
-      }
-
-      body.single-post-mode .post-feed > .post-prose:not(:target) {
-        display: none;
-      }
-
-      body.single-post-mode .post-feed > .post-prose:target {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28);
-      }
-
-      .post-index a {
-        color: var(--ink);
-      }
-
-      .post-index .post-card {
-        display: grid;
-        gap: 6px;
-      }
-
-      .caption {
-        margin: 0;
-        padding: 13px 15px;
-        color: var(--muted);
-        font-size: 0.92rem;
-      }
-
-      .callout {
-        border: 1px solid rgba(245, 158, 11, 0.3);
-        border-left: 5px solid var(--warning);
-        border-radius: 8px;
-        background: rgba(245, 158, 11, 0.08);
-        padding: 20px 22px;
-      }
-
-      .callout p:last-child {
+      .final-panel p {
         margin-bottom: 0;
+        color: var(--muted-strong);
       }
 
       .footer {
-        padding: 34px 0 46px;
+        padding: 38px 0 46px;
         border-top: 1px solid var(--line);
         color: var(--muted);
         font-size: 0.95rem;
+      }
+
+      .footer-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) repeat(2, minmax(160px, 0.3fr));
+        gap: 24px;
+      }
+
+      .footer strong {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--ink);
+      }
+
+      .footer a {
+        display: block;
+        width: fit-content;
+        margin-bottom: 6px;
+        color: var(--muted-strong);
+      }
+
+      .copyright {
+        margin: 26px 0 0;
       }
 
       .modal {
@@ -549,13 +575,21 @@
         box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
       }
 
-      .modal-header {
+      .modal-header,
+      .modal-controls {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 16px;
         padding: 14px 16px;
+      }
+
+      .modal-header {
         border-bottom: 1px solid var(--line);
+      }
+
+      .modal-controls {
+        border-top: 1px solid var(--line);
       }
 
       .modal-title {
@@ -581,15 +615,6 @@
         border-radius: 6px;
       }
 
-      .modal-controls {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 14px 16px;
-        border-top: 1px solid var(--line);
-      }
-
       .icon-button {
         display: inline-flex;
         align-items: center;
@@ -605,12 +630,13 @@
       }
 
       .icon-button:hover,
-      .button:hover {
+      .button:hover,
+      .nav-cta:hover {
         border-color: var(--accent);
         text-decoration: none;
       }
 
-      @media (max-width: 920px) {
+      @media (max-width: 980px) {
         .topbar-inner {
           align-items: flex-start;
           flex-direction: column;
@@ -622,26 +648,55 @@
           flex-wrap: wrap;
         }
 
-        .hero {
-          padding-top: 36px;
-        }
-
-        .hero-grid,
+        .proof-grid,
         .feature-grid,
-        .sales-grid,
-        .stack,
-        .blog-layout,
+        .audience-grid,
+        .blog-grid,
+        .faq-grid,
         .capture-grid,
-        .proof {
+        .split,
+        .stack,
+        .footer-grid,
+        .final-panel {
           grid-template-columns: 1fr;
         }
 
-        .post-next {
-          position: static;
+        .flow {
+          grid-template-columns: 1fr;
         }
 
-        body.single-post-mode .post-index {
-          order: -1;
+        .flow-step:not(:last-child)::after {
+          content: "↓";
+          top: auto;
+          right: 50%;
+          bottom: -18px;
+          transform: translateX(50%);
+        }
+      }
+
+      @media (max-width: 620px) {
+        .shell {
+          width: min(100% - 24px, 1160px);
+        }
+
+        section,
+        .hero {
+          padding: 42px 0;
+        }
+
+        h1 {
+          font-size: clamp(2.25rem, 15vw, 3.7rem);
+        }
+
+        .actions .button,
+        .final-panel .button {
+          width: 100%;
+        }
+
+        .case-file,
+        .case-row,
+        .before-after {
+          grid-template-columns: 1fr;
         }
       }
     </style>
@@ -650,3466 +705,428 @@
     <header class="topbar">
       <div class="shell topbar-inner">
         <a class="brand" href="#">
-          <img class="brand-mark" src="images/icon.png" alt="" />
+          <img class="brand-mark" src="images/icon.png" alt="" width="40" height="40" />
           <span>Valtron</span>
         </a>
         <nav class="nav" aria-label="Navegação principal">
           <a href="#recursos">Recursos</a>
-          <a href="#por-que-usar">Por que usar</a>
-          <a href="#blog">Blog</a>
+          <a href="#como-funciona">Como funciona</a>
+          <a href="#para-quem">Para quem</a>
           <a href="#interface">Interface</a>
-          <a href="https://github.com/Zigtecnologia-web/valtron#readme">README</a>
+          <a href="blog/">Blog</a>
+          <a href="https://github.com/Zigtecnologia-web/valtron">GitHub</a>
+          <a class="nav-cta" href="https://github.com/Zigtecnologia-web/valtron/releases/latest">Baixar Valtron</a>
         </nav>
       </div>
     </header>
 
     <main>
       <section class="hero">
-        <div class="shell hero-grid">
-          <div>
-            <p class="eyebrow">Análise local para arquivos grandes</p>
-            <h1>Transforme planilhas pesadas em análise rápida.</h1>
-            <p class="lead">
-              Valtron é um data studio desktop para quem precisa abrir, validar
-              e consultar Excel e CSV grandes sem mandar dados sensíveis para a
-              nuvem. Importe o arquivo, filtre, ordene, rode SQL de leitura e
-              encontre problemas nos dados com velocidade de banco analítico.
-            </p>
-            <div class="actions">
-              <a
-                class="button primary"
-                href="https://github.com/Zigtecnologia-web/valtron/blob/main/docs/PROJETO.md"
-              >
-                Ver documentação técnica
-              </a>
-              <a class="button" href="https://github.com/Zigtecnologia-web/valtron">
-                Ver repositório
-              </a>
-            </div>
-            <div class="proof" aria-label="Destaques do Valtron">
-              <div class="proof-item">
-                <strong>Local-first</strong>
-                <span>Seus dados continuam no computador.</span>
-              </div>
-              <div class="proof-item">
-                <strong>DuckDB</strong>
-                <span>Motor analítico feito para consulta rápida.</span>
-              </div>
-              <div class="proof-item">
-                <strong>Sem travar</strong>
-                <span>Grid paginada para navegar por bases grandes.</span>
-              </div>
-            </div>
+        <div class="shell hero-copy">
+          <p class="eyebrow">Data Preparation e Data Quality local</p>
+          <h1>Trabalhe com planilhas grandes sem travar sua máquina.</h1>
+          <p class="lead">
+            Importe, explore, valide, transforme e consulte arquivos Excel e CSV
+            com centenas de milhares de registros. Tudo localmente, sem enviar
+            seus dados para a nuvem.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/Zigtecnologia-web/valtron/releases/latest">Baixar Valtron</a>
+            <a class="button" href="#como-funciona">Ver como funciona</a>
           </div>
+          <div class="small-links">
+            <a href="PROJETO.md">Documentação técnica</a>
+            <span>·</span>
+            <a href="https://github.com/Zigtecnologia-web/valtron">GitHub</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="screenshot-section" aria-label="Screenshot principal do Valtron">
+        <div class="shell">
           <figure class="hero-shot">
-            <button
-              class="image-button"
-              type="button"
-              data-slide="0"
-              aria-label="Abrir imagem principal ampliada"
-            >
+            <button class="image-button" type="button" data-slide="0" aria-label="Abrir screenshot principal ampliada">
               <img
                 src="images/valtron-interface-compacta.png"
-                alt="Interface principal do Valtron com grid de dados importados"
+                alt="Interface do Valtron com documento importado, grid de dados, métricas e painel de análise"
+                width="2864"
+                height="1800"
               />
             </button>
           </figure>
         </div>
       </section>
 
-      <section id="recursos">
+      <section aria-label="Provas rápidas">
+        <div class="shell">
+          <div class="proof-grid">
+            <div class="proof-item">
+              <strong>604 mil+</strong>
+              <span>registros no arquivo usado em benchmark</span>
+            </div>
+            <div class="proof-item">
+              <strong>Poucos segundos</strong>
+              <span>para importação XLSX no benchmark</span>
+            </div>
+            <div class="proof-item">
+              <strong>100% local</strong>
+              <span>sem upload obrigatório</span>
+            </div>
+            <div class="proof-item">
+              <strong>XLSX + XLSM + CSV</strong>
+              <span>formatos suportados</span>
+            </div>
+          </div>
+          <p class="note">O desempenho pode variar conforme hardware, tamanho e estrutura do arquivo.</p>
+        </div>
+      </section>
+
+      <section id="recursos" class="band">
+        <div class="shell split">
+          <div class="section-heading">
+            <p class="eyebrow">Problema</p>
+            <h2>Planilhas funcionam bem. Até ficarem grandes demais.</h2>
+          </div>
+          <div>
+            <p>
+              Quando o volume cresce, tarefas simples começam a custar tempo:
+              abrir o arquivo, navegar, filtrar, encontrar duplicidades,
+              verificar formatos, validar campos ou descobrir por que uma carga
+              está falhando.
+            </p>
+            <p>
+              O Valtron transforma esses arquivos em uma base analítica local
+              para que você possa investigar os dados sem precisar configurar
+              infraestrutura ou criar um script diferente para cada análise.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="como-funciona">
         <div class="shell">
           <div class="section-heading">
-            <p class="eyebrow">O que você ganha</p>
-            <h2>Menos espera, menos risco e mais clareza sobre seus dados.</h2>
-            <p>
-              O Valtron foi criado para substituir o ciclo lento de abrir
-              planilhas enormes, esperar a interface responder e perder tempo
-              procurando inconsistências manualmente.
-            </p>
+            <p class="eyebrow">Fluxo do Valtron</p>
+            <h2>Do arquivo bruto até dados prontos para uso</h2>
+          </div>
+          <div class="flow" aria-label="Importar, explorar, analisar, validar, transformar e exportar">
+            <article class="flow-step">
+              <strong>Importar</strong>
+              <p>Abra arquivos XLSX, XLSM e CSV e mantenha cada conjunto de dados organizado localmente.</p>
+            </article>
+            <article class="flow-step">
+              <strong>Explorar</strong>
+              <p>Navegue por grandes bases usando grid virtualizada, filtros, ordenação e seleção de colunas.</p>
+            </article>
+            <article class="flow-step">
+              <strong>Analisar</strong>
+              <p>Use Data Profiling para descobrir vazios, valores distintos, distribuições, padrões e tipos prováveis.</p>
+            </article>
+            <article class="flow-step">
+              <strong>Validar</strong>
+              <p>Crie regras de qualidade e encontre rapidamente os registros que não seguem o padrão esperado.</p>
+            </article>
+            <article class="flow-step">
+              <strong>Transformar</strong>
+              <p>Corrija milhares de valores em massa com preview do resultado antes da alteração.</p>
+            </article>
+            <article class="flow-step">
+              <strong>Exportar</strong>
+              <p>Exporte o documento preparado para CSV, TSV ou XLSX.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="band">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Benefícios</p>
+            <h2>Menos tempo preparando dados. Mais tempo entendendo o que eles dizem.</h2>
           </div>
           <div class="feature-grid">
             <article class="feature">
-              <h3>Importação local de Excel e CSV</h3>
-              <p>
-                Abra arquivos XLSX, XLSM e CSV pelo seletor nativo e mantenha
-                cada importação organizada como um documento independente.
-              </p>
+              <h3>Trabalhe com arquivos grandes</h3>
+              <p>Explore bases que já ficaram desconfortáveis para trabalhar em uma planilha tradicional.</p>
             </article>
             <article class="feature">
-              <h3>Navegação pensada para volume</h3>
-              <p>
-                Explore bases grandes com paginação, filtros por coluna e
-                ordenação sem depender da planilha inteira carregada na tela.
-              </p>
+              <h3>Encontre problemas antes da carga</h3>
+              <p>Identifique vazios, duplicidades, formatos incorretos e violações antes que os dados cheguem ao sistema de destino.</p>
             </article>
             <article class="feature">
-              <h3>Diagnóstico de qualidade</h3>
-              <p>
-                Veja rapidamente quantas células estão vazias, quais colunas
-                concentram falhas e onde vale investigar primeiro.
-              </p>
+              <h3>Corrija em massa</h3>
+              <p>Aplique transformações sobre milhares de registros sem editar célula por célula.</p>
             </article>
             <article class="feature">
-              <h3>SQL para perguntas diretas</h3>
-              <p>
-                Use consultas somente leitura para cruzar, resumir e validar
-                dados sem alterar a base original.
-              </p>
+              <h3>Veja antes de modificar</h3>
+              <p>Use preview para saber quais valores serão alterados antes de confirmar uma transformação.</p>
             </article>
             <article class="feature">
-              <h3>Privacidade por padrão</h3>
-              <p>
-                Dados financeiros, fiscais, cadastrais ou operacionais ficam
-                locais, sem upload obrigatório para serviços externos.
-              </p>
+              <h3>Investigue sem scripts descartáveis</h3>
+              <p>Use profiling, filtros e quality para responder perguntas recorrentes diretamente pela interface.</p>
             </article>
             <article class="feature">
-              <h3>Interface objetiva</h3>
-              <p>
-                Workspaces, documentos, grid, filtros, estatísticas e SQL ficam
-                próximos para acelerar o fluxo de investigação.
-              </p>
+              <h3>Vá além com SQL</h3>
+              <p>Execute consultas analíticas somente leitura quando precisar de maior liberdade.</p>
             </article>
           </div>
         </div>
       </section>
 
-      <section id="por-que-usar" class="sales-band">
-        <div class="shell sales-grid">
+      <section>
+        <div class="shell split">
           <div class="section-heading">
-            <p class="eyebrow">Por que usar</p>
-            <h2>Porque planilha grande não deveria virar gargalo.</h2>
-            <p>
-              Valtron atende equipes que recebem arquivos pesados, precisam
-              validar dados antes de importar para sistemas internos e não podem
-              depender de upload para analisar informações sensíveis.
-            </p>
+            <p class="eyebrow">Caso prático</p>
+            <h2>De 600 mil registros para aquilo que realmente precisa de atenção</h2>
+            <p>Exemplo ilustrativo baseado em problemas comuns de arquivos cadastrais grandes.</p>
           </div>
-          <div class="argument-list">
-            <article class="argument">
-              <strong>Para auditoria e conferência</strong>
-              <p>
-                Encontre vazios, padrões suspeitos e divergências antes que o
-                arquivo avance no processo.
-              </p>
-            </article>
-            <article class="argument">
-              <strong>Para operação e suporte</strong>
-              <p>
-                Abra bases de clientes, cadastros, matrículas, códigos e
-                relatórios sem perder zeros à esquerda ou formatos importantes.
-              </p>
-            </article>
-            <article class="argument">
-              <strong>Para análise sem infraestrutura</strong>
-              <p>
-                Tenha uma experiência próxima de um banco analítico sem montar
-                servidor, pipeline ou ambiente em nuvem.
-              </p>
-            </article>
+          <div class="case-panel">
+            <div class="case-file">
+              <div>
+                <strong>alunos.xlsx</strong>
+                <span>604.270 registros</span>
+              </div>
+              <span>Exemplo ilustrativo</span>
+            </div>
+            <div class="case-row">
+              <strong>Profiling</strong>
+              <span>CPF: valores suspeitos · DATA_NASCIMENTO: formatos inconsistentes · NOME: espaços extras</span>
+            </div>
+            <div class="case-row">
+              <strong>Quality</strong>
+              <span>Registros que precisam de atenção ficam filtráveis para investigação.</span>
+            </div>
+            <div class="case-row">
+              <strong>Transformação</strong>
+              <span>Preview mostra o antes e depois antes de aplicar a correção em massa.</span>
+            </div>
+            <div class="before-after" aria-label="Antes e depois">
+              <div>
+                <span>Antes</span>
+                <code>030.004.845-90
+"  JOÃO SILVA "
+33639</code>
+              </div>
+              <div>
+                <span>Depois</span>
+                <code>03000484590
+"JOÃO SILVA"
+05/02/1992</code>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <section id="stack">
+      <section id="para-quem" class="band">
         <div class="shell">
           <div class="section-heading">
-            <p class="eyebrow">Tecnologia</p>
-            <h2>Stack desktop enxuta para processamento local.</h2>
+            <p class="eyebrow">Para quem é</p>
+            <h2>Para quem trabalha com dados antes deles chegarem ao sistema</h2>
           </div>
-          <div class="stack">
-            <article class="stack-item">
-              <h3>Tauri 2</h3>
-              <p>Empacotamento desktop e ponte nativa.</p>
+          <div class="audience-grid">
+            <article class="audience">
+              <h3>Analistas de dados</h3>
+              <p>Explore arquivos recebidos de outras áreas e entenda rapidamente o conteúdo da base.</p>
             </article>
-            <article class="stack-item">
-              <h3>Rust</h3>
-              <p>Importação, persistência e consultas.</p>
+            <article class="audience">
+              <h3>Engenharia de dados</h3>
+              <p>Inspecione e valide datasets antes de pipelines, cargas e migrações.</p>
             </article>
-            <article class="stack-item">
-              <h3>DuckDB</h3>
-              <p>Motor analítico local embutido.</p>
+            <article class="audience">
+              <h3>Desenvolvedores</h3>
+              <p>Investigue arquivos problemáticos sem criar um script diferente para cada situação.</p>
             </article>
-            <article class="stack-item">
-              <h3>TypeScript</h3>
-              <p>Interface e estado do frontend.</p>
-            </article>
-            <article class="stack-item">
-              <h3>Vite</h3>
-              <p>Servidor de desenvolvimento e build web.</p>
+            <article class="audience">
+              <h3>Auditoria e operação</h3>
+              <p>Confira cadastros, relatórios e bases sensíveis mantendo os dados localmente.</p>
             </article>
           </div>
         </div>
       </section>
 
-      <section id="interface">
+      <section>
+        <div class="shell split">
+          <div class="section-heading">
+            <p class="eyebrow">Local-first</p>
+            <h2>Seus dados não precisam sair da sua máquina</h2>
+            <p>
+              O processamento principal acontece localmente. O Valtron utiliza
+              um banco analítico embutido e não exige upload do documento para
+              um serviço externo para permitir exploração, consultas e validações.
+            </p>
+          </div>
+          <div class="local-visual">
+            <div class="machine">
+              <div class="machine-title">SEU COMPUTADOR</div>
+              <div class="machine-flow">
+                <span>XLSX / CSV</span>
+                <span>↓</span>
+                <span>Valtron</span>
+                <span>↓</span>
+                <span>DuckDB</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="interface" class="band">
         <div class="shell">
           <div class="section-heading">
             <p class="eyebrow">Interface</p>
-            <h2>Veja os dados, os documentos e a qualidade em uma tela.</h2>
-            <p>
-              Clique nas imagens para abrir a visualização ampliada.
-            </p>
+            <h2>Feito para investigar dados sem perder o contexto</h2>
+            <p>Clique nas imagens para abrir a visualização ampliada.</p>
           </div>
           <div class="capture-grid">
             <figure class="capture">
-              <button
-                class="image-button"
-                type="button"
-                data-slide="0"
-                aria-label="Abrir visualização principal ampliada"
-              >
+              <button class="image-button" type="button" data-slide="0" aria-label="Abrir grid ampliado">
                 <img
                   src="images/valtron-interface-compacta.png"
                   alt="Grid principal de dados importados no Valtron"
+                  width="2864"
+                  height="1800"
+                  loading="lazy"
                 />
               </button>
-              <figcaption class="caption">
-                Visualização principal com documento importado, estatísticas e
-                paginação.
-              </figcaption>
+              <figcaption class="caption"><strong>Grid.</strong> Navegue, filtre, ordene e edite grandes documentos.</figcaption>
             </figure>
             <figure class="capture">
-              <button
-                class="image-button"
-                type="button"
-                data-slide="1"
-                aria-label="Abrir painel de workspaces ampliado"
-              >
+              <button class="image-button" type="button" data-slide="1" aria-label="Abrir profiling e quality ampliados">
                 <img
                   src="images/valtron-interface-workspace.png"
                   alt="Valtron com painel lateral de workspaces e documentos aberto"
+                  width="2880"
+                  height="1800"
+                  loading="lazy"
                 />
               </button>
-              <figcaption class="caption">
-                Painel lateral com workspaces e documentos importados.
-              </figcaption>
+              <figcaption class="caption"><strong>Profiling e Quality.</strong> Analise uma coluna e chegue diretamente aos registros problemáticos.</figcaption>
             </figure>
-          </div>
-        </div>
-      </section>
-
-      <section id="blog" class="sales-band">
-        <div class="shell">
-          <div class="section-heading">
-            <p class="eyebrow">Blog</p>
-            <h2>Postagens sobre evolução, decisões técnicas e uso do Valtron.</h2>
-            <p>
-              Um espaço para registrar novidades do produto, explicar escolhas
-              de arquitetura e organizar textos sobre preparação de dados.
-            </p>
-          </div>
-
-          <div class="blog-layout">
-            <div class="post-feed">
-              <article id="post-origem-valtron" class="post-card featured post-prose">
-              <div class="post-meta">
-                <span>Desenvolvimento</span>
-                <span>15 ago 2026</span>
-              </div>
-              <a class="post-permalink" href="posts/origem-valtron/">Link desta postagem</a>
-              <h3>Por que comecei a desenvolver o Valtron</h3>
-              <p>
-                O Valtron começou a partir de um problema relativamente simples:
-                trabalhar com arquivos de dados grandes no desktop sem
-                transformar isso em um processo complicado.
-              </p>
-              <p>
-                Planilhas funcionam muito bem para uma quantidade enorme de
-                situações. O problema começa quando o volume cresce.
-              </p>
-              <p>
-                Um arquivo com centenas de milhares de linhas pode até abrir,
-                mas abrir o arquivo é apenas uma parte do problema. Depois você
-                precisa navegar pelos dados, filtrar, ordenar, procurar
-                inconsistências, fazer consultas e, eventualmente, alterar ou
-                exportar alguma coisa.
-              </p>
-              <p>Foi a partir desse cenário que comecei a desenvolver o Valtron.</p>
-
-              <h4>A ideia inicial</h4>
-              <p>
-                O objetivo era construir uma aplicação desktop capaz de importar
-                arquivos grandes e permitir trabalhar com eles localmente.
-              </p>
-              <p>Sem precisar subir o arquivo para algum serviço.</p>
-              <p>Sem precisar configurar um banco de dados externo.</p>
-              <p>
-                Sem precisar criar um script diferente toda vez que eu quisesse
-                investigar alguma coisa.
-              </p>
-              <p>O fluxo deveria ser simples:</p>
-              <pre><code>XLSX / CSV
-     ↓
-   Valtron
-     ↓
- explorar os dados</code></pre>
-              <p>
-                Só que rapidamente percebi que importar rápido não seria
-                suficiente.
-              </p>
-              <p>
-                Se eu conseguisse carregar 600 mil linhas em poucos segundos,
-                mas a interface travasse tentando renderizar tudo, eu apenas
-                teria movido o gargalo de lugar.
-              </p>
-              <p>Foi aí que o projeto começou a ficar mais interessante.</p>
-
-              <h4>DuckDB como motor local</h4>
-              <p>Escolhi o DuckDB como banco local do Valtron.</p>
-              <p>
-                A ideia combina bastante com o tipo de aplicação que eu queria
-                construir. Em vez de precisar manter um PostgreSQL ou outro
-                servidor rodando, o banco fica embutido na própria aplicação.
-              </p>
-              <p>O arquivo entra e vira uma tabela local no DuckDB.</p>
-              <p>Hoje, cada documento importado pelo Valtron é persistido dessa forma.</p>
-              <p>Isso permite usar SQL para fazer boa parte do trabalho pesado:</p>
-              <pre><code>SELECT COUNT(*)
-FROM documento;</code></pre>
-              <p>ou:</p>
-              <pre><code>SELECT cidade, COUNT(*)
-FROM documento
-GROUP BY cidade;</code></pre>
-              <p>
-                A interface não precisa conhecer centenas de milhares de
-                registros de uma vez. Ela pede ao DuckDB apenas aquilo de que
-                precisa.
-              </p>
-
-              <h4>A interface também precisava ser econômica</h4>
-              <p>Essa foi outra parte importante do projeto.</p>
-              <p>
-                Se existem 600 mil registros, não existe motivo para criar 600
-                mil elementos HTML se o usuário consegue enxergar talvez 20 ou
-                30 linhas naquele momento.
-              </p>
-              <p>Por isso a grid do Valtron é virtualizada.</p>
-              <p>
-                Ela trabalha com pequenos lotes de dados e mantém em memória
-                somente as regiões próximas daquela que está sendo visualizada.
-                Atualmente o Valtron trabalha com lotes de 100 linhas, overscan
-                e cache limitado de lotes.
-              </p>
-              <p>A lógica é basicamente:</p>
-              <pre><code>600.000 registros no DuckDB
-
-          ↓
-
-buscar somente uma pequena janela
-
-          ↓
-
-renderizar o que o usuário precisa ver</code></pre>
-              <p>
-                Parece uma diferença pequena, mas muda completamente o
-                comportamento da aplicação.
-              </p>
-
-              <h4>O Valtron começou a crescer</h4>
-              <p>
-                Depois que importação e navegação ficaram funcionando bem,
-                começaram a aparecer outras necessidades.
-              </p>
-              <p>
-                Hoje já consigo organizar documentos em workspaces, filtrar e
-                ordenar dados, escolher as colunas visíveis, redimensionar
-                colunas, editar células, executar consultas SQL e exportar
-                documentos novamente para CSV, TSV ou XLSX.
-              </p>
-              <p>
-                Mais recentemente comecei a trabalhar também com profiling e
-                qualidade dos dados.
-              </p>
-              <p>A ideia deixou de ser apenas:</p>
-              <blockquote>abrir um arquivo grande.</blockquote>
-              <p>E passou a ser:</p>
-              <blockquote>abrir, entender e trabalhar com esse arquivo.</blockquote>
-              <p>
-                Essa diferença está direcionando bastante o desenvolvimento do
-                projeto.
-              </p>
-
-              <h4>O que o Valtron está se tornando</h4>
-              <p>Hoje penso no Valtron como um pequeno data studio local.</p>
-              <p>A arquitetura continua relativamente simples:</p>
-              <pre><code>Tauri
-  │
-  ├── TypeScript
-  │      ↓
-  │   Interface
-  │
-  └── Rust
-         ↓
-       DuckDB</code></pre>
-              <p>
-                O Tauri cuida da aplicação desktop, TypeScript da interface,
-                Rust das operações de backend e DuckDB do processamento
-                analítico dos dados.
-              </p>
-              <p>Ainda há bastante coisa que quero experimentar.</p>
-              <p>Mas uma das ideias que pretendo preservar é esta:</p>
-              <blockquote>
-                Os dados ficam locais e o trabalho pesado deve acontecer o mais
-                próximo possível deles.
-              </blockquote>
-              <p>
-                No próximo post vou entrar em uma das partes que mais me fizeram
-                experimentar durante o desenvolvimento: como importar mais de
-                600 mil registros de um XLSX em poucos segundos e por que
-                algumas tentativas de otimização deixaram o processo mais lento.
-              </p>
-              </article>
-
-              <article id="post-importacao-xlsx" class="post-card post-prose">
-              <div class="post-meta">
-                <span>Performance</span>
-                <span>15 ago 2026</span>
-              </div>
-              <a class="post-permalink" href="posts/importacao-xlsx/">Link desta postagem</a>
-              <h3>Como carreguei mais de 600 mil registros em poucos segundos</h3>
-              <p>
-                Um dos primeiros desafios que coloquei para o Valtron foi
-                importar rapidamente um arquivo XLSX grande.
-              </p>
-              <p>
-                O arquivo que usei nos testes tinha <strong>604.270 linhas e 13
-                colunas</strong>.
-              </p>
-              <p>Minha pergunta inicialmente parecia simples:</p>
-              <blockquote>Qual é a maneira mais rápida de colocar esses dados no DuckDB?</blockquote>
-              <p>A resposta acabou sendo menos óbvia do que eu imaginava.</p>
-
-              <h4>A primeira ideia</h4>
-              <p>
-                Como o backend do Valtron é escrito em Rust, um caminho natural
-                seria abrir o XLSX no Rust, percorrer as células, tratar os
-                valores e depois inserir os dados no DuckDB.
-              </p>
-              <p>Algo parecido com:</p>
-              <pre><code>XLSX
-  ↓
-Rust lê planilha
-  ↓
-converte os dados
-  ↓
-DuckDB</code></pre>
-              <p>Tecnicamente funciona.</p>
-              <p>O problema é que existe um custo escondido nesse processo.</p>
-              <p>
-                O Rust precisa abrir e percorrer o arquivo. Depois os dados
-                precisam ser convertidos e enviados para o banco.
-              </p>
-              <p>
-                Quando estamos falando de algumas centenas de linhas, isso
-                provavelmente não chama atenção.
-              </p>
-              <p>Com mais de 600 mil, começa a aparecer.</p>
-
-              <h4>Testando outras estratégias</h4>
-              <p>Durante o desenvolvimento experimentei caminhos diferentes.</p>
-              <p>Entre eles:</p>
-              <pre><code>XLSX → Rust → CSV → DuckDB</code></pre>
-              <p>Também:</p>
-              <pre><code>XLSX → Rust → Appender → DuckDB</code></pre>
-              <p>E:</p>
-              <pre><code>XLSX → DuckDB read_xlsx</code></pre>
-              <p>Foi importante medir cada etapa separadamente.</p>
-              <p>
-                Não bastava saber que uma importação levou 20 segundos. Eu
-                queria descobrir <strong>onde os 20 segundos estavam sendo
-                gastos</strong>.
-              </p>
-              <p>Por isso comecei a registrar métricas como:</p>
-              <pre><code>abertura do XLSX
-leitura da planilha
-conversão
-geração de CSV
-DuckDB
-Appender
-commit
-tempo total</code></pre>
-              <p>Essa instrumentação acabou mudando algumas decisões do projeto.</p>
-
-              <h4>Uma otimização que piorou a performance</h4>
-              <p>
-                Em determinado momento havia uma etapa em Rust que abria o XLSX
-                antes do DuckDB.
-              </p>
-              <p>
-                A intenção era boa. Eu poderia descobrir informações sobre a
-                planilha, validar algumas coisas e preparar o processo de
-                importação.
-              </p>
-              <p>Só havia um problema.</p>
-              <p>
-                Depois disso, o DuckDB precisava abrir o mesmo XLSX novamente
-                para realmente importar os dados.
-              </p>
-              <p>Na prática:</p>
-              <pre><code>arquivo.xlsx
-    ↓
-Rust abre e percorre
-    ↓
-~5 segundos
-    ↓
-DuckDB abre novamente
-    ↓
-importação</code></pre>
-              <p>Eu estava fazendo trabalho duas vezes.</p>
-              <p>
-                A documentação atual do Valtron inclusive protege essa decisão
-                arquitetural: o caminho padrão não deve abrir previamente a
-                planilha com <code>calamine</code>, percorrer suas células ou
-                gerar um CSV intermediário.
-              </p>
-
-              <h4>Removendo trabalho</h4>
-              <p>
-                A solução que apresentou o melhor comportamento foi muito mais
-                simples:
-              </p>
-              <pre><code>arquivo.xlsx
-     ↓
-DuckDB read_xlsx
-     ↓
-tabela</code></pre>
-              <p>O comando conceitualmente fica próximo de:</p>
-              <pre><code>CREATE TABLE documento AS
-SELECT *
-FROM read_xlsx(
-    'arquivo.xlsx',
-    header = true,
-    all_varchar = true
-);</code></pre>
-              <p>
-                O Valtron atualmente utiliza justamente
-                <code>CREATE TABLE ... AS SELECT * FROM read_xlsx(...)</code>
-                no caminho padrão de XLSX/XLSM.
-              </p>
-              <p>Com isso, eliminei uma passagem completa pelo arquivo.</p>
-
-              <h4>Por que all_varchar = true?</h4>
-              <p>Outra decisão foi importar inicialmente as colunas como texto.</p>
-              <p>Pode parecer estranho para uma ferramenta de análise de dados.</p>
-              <p>Por que uma nota <code>8.5</code> não entra diretamente como decimal?</p>
-              <p>Por que uma data não entra diretamente como <code>DATE</code>?</p>
-              <p>
-                Porque, nessa etapa, minha prioridade é preservar aquilo que
-                chegou no arquivo e evitar inferências inesperadas.
-              </p>
-              <p>O Valtron pode posteriormente analisar uma coluna e concluir:</p>
-              <pre><code>NOTA
-Decimal provável</code></pre>
-              <p>ou:</p>
-              <pre><code>DATA_NASCIMENTO
-Data provável</code></pre>
-              <p>
-                Mas isso é diferente de modificar a representação do dado
-                durante a ingestão.
-              </p>
-              <p>
-                Hoje as colunas importadas são armazenadas como texto justamente
-                para manter esse comportamento previsível.
-              </p>
-
-              <h4>O resultado</h4>
-              <p>
-                Com o caminho direto via <code>read_xlsx</code>, consegui
-                chegar à casa de poucos segundos para importar o arquivo de
-                teste com mais de 600 mil registros.
-              </p>
-              <p>
-                Mas o resultado mais interessante não foi simplesmente o número
-                do benchmark.
-              </p>
-              <p>Foi perceber que:</p>
-              <blockquote>às vezes otimizar significa remover código.</blockquote>
-              <p>
-                Eu estava procurando uma maneira mais rápida de processar o XLSX
-                em Rust quando, na prática, o melhor resultado apareceu ao
-                deixar de processá-lo duas vezes.
-              </p>
-              <p>Essa experiência também criou uma regra para o projeto.</p>
-              <p>
-                O caminho de importação que apresentou o melhor resultado fica
-                protegido. Uma funcionalidade nova de interface, profiling,
-                filtros ou qualidade de dados não deve mexer nele sem uma razão
-                diretamente relacionada à importação e sem um novo benchmark
-                mostrando ganho real.
-              </p>
-              <p>
-                Isso evita uma situação comum em otimização: melhorar a
-                arquitetura no papel e piorar o tempo no cronômetro.
-              </p>
-              <p>
-                No próximo post, pretendo falar sobre a outra metade do
-                problema: depois de importar 600 mil registros rapidamente, como
-                mostrar esses dados sem transformar a interface no novo gargalo?
-              </p>
-              </article>
-
-              <article id="post-grid-virtualizada" class="post-card post-prose">
-                <div class="post-meta">
-                  <span>Interface</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <a class="post-permalink" href="posts/grid-virtualizada/">Link desta postagem</a>
-                <h3>Importar 600 mil linhas rápido não adianta se a interface travar</h3>
-                <p>
-                Nos primeiros testes do Valtron, boa parte da minha atenção
-                estava no tempo de importação.
-                </p>
-                <p>
-                O objetivo era simples: pegar um XLSX grande, colocar os dados
-                no DuckDB e disponibilizá-los para consulta o mais rápido
-                possível.
-                </p>
-                <p>
-                Depois de alguns experimentos, consegui chegar a poucos segundos
-                para um arquivo com mais de 600 mil registros.
-                </p>
-                <p>Só que isso criou outro problema.</p>
-                <blockquote>O banco conseguia lidar com os dados. A interface também precisava conseguir.</blockquote>
-
-              <h4>O problema mudou de lugar</h4>
-              <p>Imagine um arquivo com:</p>
-              <pre><code>604.270 linhas
-13 colunas</code></pre>
-              <p>Isso representa quase 8 milhões de células.</p>
-              <p>
-                Mesmo que os dados já estejam disponíveis no DuckDB, não faria
-                sentido buscar 604 mil registros e criar milhares ou milhões de
-                elementos HTML para mostrá-los.
-              </p>
-              <p>Seria algo parecido com:</p>
-              <pre><code>DuckDB
-   ↓
-SELECT 600.000 linhas
-   ↓
-Rust
-   ↓
-TypeScript
-   ↓
-DOM
-   ↓
-problema</code></pre>
-              <p>Nesse cenário, eu teria uma importação rápida e uma interface lenta.</p>
-              <p>A otimização só teria mudado o gargalo de lugar.</p>
-
-              <h4>A grid não precisa conhecer o arquivo inteiro</h4>
-              <p>A pergunta que ajudou a resolver isso foi:</p>
-              <blockquote>Se o usuário consegue enxergar apenas algumas linhas na tela, por que carregar 600 mil?</blockquote>
-              <p>A grid do Valtron passou então a trabalhar com <strong>virtualização</strong>.</p>
-              <p>A ideia é relativamente simples.</p>
-              <p>Suponha que o documento tenha:</p>
-              <pre><code>604.270 registros</code></pre>
-              <p>mas naquele momento a tela mostre algo próximo de:</p>
-              <pre><code>20 ou 30 registros</code></pre>
-              <p>Não existe necessidade de renderizar os outros 604 mil.</p>
-              <p>O Valtron trabalha com pequenas janelas dos dados:</p>
-              <pre><code>             604.270 linhas
-                   │
-                   │
-                   ▼
-        ┌─────────────────────┐
-        │       DuckDB        │
-        └──────────┬──────────┘
-                   │
-             busca 100
-                   │
-                   ▼
-        ┌─────────────────────┐
-        │   janela da grid    │
-        │                     │
-        │ linha 1200          │
-        │ linha 1201          │
-        │ linha 1202          │
-        │ ...                 │
-        └─────────────────────┘</code></pre>
-              <p>Atualmente, a grid utiliza lotes de 100 linhas.</p>
-
-              <h4>O scroll passa a determinar quais dados são necessários</h4>
-              <p>
-                Conforme o usuário navega, o frontend calcula qual região da
-                tabela deveria estar visível.
-              </p>
-              <p>Então solicita ao backend apenas aquela janela.</p>
-              <p>
-                O backend possui uma operação específica para isso e retorna os
-                valores das colunas necessárias, além das informações usadas
-                para saber se existe um próximo lote.
-              </p>
-              <p>Conceitualmente:</p>
-              <pre><code>Usuário faz scroll
-       ↓
-Frontend calcula a região
-       ↓
-"Preciso das linhas 1200 até 1299"
-       ↓
-Rust
-       ↓
-DuckDB
-       ↓
-100 registros
-       ↓
-Grid</code></pre>
-              <p>
-                Assim, o tamanho total do documento deixa de determinar
-                diretamente quantos elementos precisam existir na interface.
-              </p>
-
-              <h4>Mas buscar somente quando o usuário chega também não é suficiente</h4>
-              <p>Existe outro detalhe.</p>
-              <p>
-                Se a aplicação esperar o usuário chegar ao final de um lote para
-                só então buscar o próximo, pode aparecer uma pequena pausa
-                durante o scroll.
-              </p>
-              <p>Por isso implementei <strong>prefetch</strong>.</p>
-              <p>
-                Antes de o usuário realmente precisar do próximo conjunto de
-                registros, o Valtron já pode começar a buscá-lo.
-              </p>
-              <p>O comportamento fica aproximadamente assim:</p>
-              <pre><code>Lote atual
-
-0 ───────────────────── 100
-                  ↑
-             usuário
-
-              ↓
-
-Valtron percebe que está
-se aproximando do final
-
-              ↓
-
-busca 100 ───────────── 200</code></pre>
-              <p>
-                Atualmente o prefetch acontece quando a navegação alcança
-                aproximadamente 75% da região configurada.
-              </p>
-              <p>
-                A intenção é simples: quando o usuário chegar aos próximos
-                registros, eles provavelmente já estarão disponíveis.
-              </p>
-
-              <h4>Cache também precisa ter limite</h4>
-              <p>Uma solução fácil seria continuar guardando todos os lotes já carregados.</p>
-              <p>Mas isso recriaria o problema original aos poucos.</p>
-              <p>Depois de navegar bastante:</p>
-              <pre><code>100 linhas
-200
-500
-2.000
-10.000
-50.000
-...</code></pre>
-              <p>
-                a aplicação começaria a acumular dados que o usuário nem está
-                mais vendo.
-              </p>
-              <p>Por isso o cache também possui limite.</p>
-              <p>
-                O Valtron mantém os lotes próximos da região atual e pode
-                descartar os mais distantes.
-              </p>
-              <p>A configuração atual limita o cache a cinco lotes.</p>
-              <p>A ideia é trabalhar com uma janela móvel:</p>
-              <pre><code>descartado
-
-[ lote 1 ]
-
-             cache atual
-
-        [ lote 8 ]
-        [ lote 9 ]
-        [ lote 10 ] ← usuário
-        [ lote 11 ]
-        [ lote 12 ]
-
-                         [ lote 20 ]
-                         ainda nem foi buscado</code></pre>
-              <p>Isso mantém o consumo de memória mais previsível.</p>
-
-              <h4>Overscan ajuda a esconder a virtualização</h4>
-              <p>Existe ainda um pequeno detalhe visual.</p>
-              <p>
-                Se fossem renderizadas somente as linhas exatamente visíveis, um
-                scroll rápido poderia revelar regiões ainda não renderizadas.
-              </p>
-              <p>
-                Por isso existem algumas linhas adicionais antes e depois da
-                região visível.
-              </p>
-              <p>É o chamado <strong>overscan</strong>.</p>
-              <p>No Valtron, atualmente são utilizadas oito linhas de overscan.</p>
-              <p>Para o usuário parece uma tabela normal.</p>
-              <p>
-                Internamente, porém, apenas uma pequena parte dela está realmente
-                sendo renderizada naquele momento.
-              </p>
-
-              <h4>E filtros e ordenação?</h4>
-              <p>Esse foi outro ponto importante.</p>
-              <p>Não faria sentido carregar todo o documento no frontend para depois executar:</p>
-              <pre><code>rows.filter(...)</code></pre>
-              <p>ou:</p>
-              <pre><code>rows.sort(...)</code></pre>
-              <p>Os filtros e a ordenação precisam acontecer próximos dos dados.</p>
-              <p>Então o frontend envia ao backend informações como:</p>
-              <pre><code>offset
-limit
-filtros
-ordenação
-colunas visíveis</code></pre>
-              <p>e o DuckDB executa a consulta correspondente.</p>
-              <p>O resultado volta já preparado para aquela janela.</p>
-              <p>A divisão de responsabilidades fica aproximadamente assim:</p>
-              <pre><code>DUCKDB
-
-filtrar
-ordenar
-paginar
-agregar
-
-      ↓
-
-RUST
-
-orquestrar
-validar
-preparar resposta
-
-      ↓
-
-TYPESCRIPT
-
-virtualizar
-cachear
-renderizar
-interagir</code></pre>
-              <p>Cada camada faz aquilo em que é melhor.</p>
-
-              <h4>Colunas também importam</h4>
-              <p>Outra otimização interessante apareceu depois.</p>
-              <p>
-                Se um documento possui 50 colunas, mas o usuário escolheu
-                visualizar apenas 8, por que transportar as outras 42?
-              </p>
-              <p>
-                O backend da janela virtualizada consegue receber quais colunas
-                estão visíveis e retornar somente os valores necessários para
-                elas.
-              </p>
-              <p>É a mesma ideia aplicada em outra direção:</p>
-              <blockquote>não buscar dados simplesmente porque eles existem.</blockquote>
-              <p>Buscar aquilo que é necessário naquele momento.</p>
-
-              <h4>O que aprendi com essa parte do Valtron</h4>
-              <p>
-                Trabalhar com grandes volumes não é apenas fazer o banco
-                responder rápido.
-              </p>
-              <p>Existe um caminho inteiro:</p>
-              <pre><code>disco
- ↓
-DuckDB
- ↓
-Rust
- ↓
-serialização
- ↓
-TypeScript
- ↓
-memória
- ↓
-DOM
- ↓
-tela</code></pre>
-              <p>O gargalo pode aparecer em qualquer ponto.</p>
-              <p>
-                No caso do Valtron, a estratégia acabou ficando baseada em uma
-                regra bastante simples:
-              </p>
-              <blockquote>o tamanho do dataset não deveria ser o tamanho do trabalho feito pela interface.</blockquote>
-              <p>
-                Se existem 600 mil linhas no banco e o usuário está olhando 30,
-                a interface deveria trabalhar o máximo possível como se
-                existissem apenas aquelas 30.
-              </p>
-              <p>DuckDB continua sabendo que existem 600 mil.</p>
-              <p>A grid não precisa saber de todas ao mesmo tempo.</p>
-              <p>
-                Foi essa separação que permitiu sair de uma importação rápida
-                para uma navegação que também continua responsiva.
-              </p>
-              <p>
-                No próximo post, quero entrar em outra decisão que parece
-                estranha à primeira vista: por que o Valtron importa as colunas
-                como texto e só depois tenta descobrir se aquilo é número, data,
-                CPF ou outro tipo de dado.
-              </p>
-              </article>
-
-              <article id="post-duckdb-desktop" class="post-card post-prose">
-                <div class="post-meta">
-                  <span>Arquitetura</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <a class="post-permalink" href="posts/duckdb-desktop/">Link desta postagem</a>
-                <h3>DuckDB dentro de uma aplicação desktop: por que escolhi esse caminho no Valtron</h3>
-                <p>
-                  Quando comecei o Valtron, uma das decisões mais importantes
-                  foi escolher onde os dados ficariam depois da importação.
-                </p>
-                <p>Eu poderia carregar o arquivo e manter tudo em memória.</p>
-                <p>Poderia converter os dados para alguma estrutura própria.</p>
-                <p>
-                  Poderia até exigir que o usuário tivesse PostgreSQL ou outro
-                  banco instalado.
-                </p>
-                <p>Acabei seguindo outro caminho:</p>
-                <blockquote>usar o DuckDB como banco de dados embutido na própria aplicação.</blockquote>
-                <p>Isso resolveu mais problemas do que apenas onde armazenar os dados.</p>
-
-                <h4>O que eu precisava</h4>
-                <p>
-                  O Valtron trabalha com arquivos que podem ter centenas de
-                  milhares de registros.
-                </p>
-                <p>
-                  Depois de importar um XLSX ou CSV, eu precisava conseguir
-                  fazer coisas como:
-                </p>
-                <pre><code>SELECT COUNT(*)
-FROM documento;</code></pre>
-                <p>Filtrar:</p>
-                <pre><code>SELECT *
-FROM documento
-WHERE cidade = 'Salvador';</code></pre>
-                <p>Ordenar:</p>
-                <pre><code>SELECT *
-FROM documento
-ORDER BY nome;</code></pre>
-                <p>Agrupar:</p>
-                <pre><code>SELECT cidade, COUNT(*)
-FROM documento
-GROUP BY cidade;</code></pre>
-                <p>
-                  E, mais recentemente, executar operações de profiling e
-                  qualidade dos dados.
-                </p>
-                <p>
-                  Ou seja, depois da importação, boa parte do problema já se
-                  parecia muito com um problema de banco de dados.
-                </p>
-                <p>Então comecei a me perguntar:</p>
-                <blockquote>Por que construir manualmente algo que um banco já sabe fazer?</blockquote>
-
-                <h4>Mas eu não queria um servidor de banco</h4>
-                <p>Usar PostgreSQL resolveria boa parte dessas necessidades.</p>
-                <p>Só que criaria outras.</p>
-                <p>
-                  Para usar o Valtron, seria necessário ter um servidor
-                  disponível, configurar conexão, usuário, senha, banco, porta e
-                  pensar no ciclo de vida desses dados.
-                </p>
-                <p>Para uma aplicação desktop, eu queria algo mais próximo disso:</p>
-                <pre><code>abre o Valtron
-      ↓
-importa o arquivo
-      ↓
-trabalha com os dados</code></pre>
-                <p>Sem uma etapa:</p>
-                <pre><code>configure seu servidor de banco</code></pre>
-                <p>É aí que o DuckDB encaixou muito bem.</p>
-
-                <h4>DuckDB não precisa de um servidor</h4>
-                <p>O DuckDB é um banco de dados embutido.</p>
-                <p>No Valtron, ele roda dentro da própria aplicação.</p>
-                <p>A arquitetura ficou aproximadamente assim:</p>
-                <pre><code>┌─────────────────────────┐
-│        Valtron          │
-│                         │
-│      TypeScript         │
-│          ↓              │
-│        Tauri            │
-│          ↓              │
-│         Rust            │
-│          ↓              │
-│        DuckDB           │
-│          ↓              │
-│     dados locais        │
-└─────────────────────────┘</code></pre>
-                <p>O frontend não abre uma conexão com um servidor externo.</p>
-                <p>
-                  Ele chama comandos Tauri, o backend Rust executa as operações
-                  e o DuckDB faz boa parte do trabalho relacionado aos dados.
-                </p>
-
-                <h4>O arquivo deixa de ser a estrutura de trabalho</h4>
-                <p>Essa foi uma mudança importante no projeto.</p>
-                <p>
-                  Depois que um XLSX é importado, eu não quero continuar abrindo
-                  e percorrendo aquela planilha toda vez que o usuário fizer
-                  alguma coisa.
-                </p>
-                <p>O fluxo é:</p>
-                <pre><code>arquivo.xlsx
-     ↓
-  importação
-     ↓
-   DuckDB
-     ↓
- consultas</code></pre>
-                <p>
-                  Cada documento importado recebe uma tabela física própria
-                  dentro do banco local.
-                </p>
-                <p>A partir daí, a fonte de trabalho passa a ser o DuckDB.</p>
-                <p>Isso significa que fazer um filtro não exige abrir novamente o XLSX.</p>
-                <p>Ordenar também não.</p>
-                <p>Executar SQL também não.</p>
-                <p>Fazer profiling também não.</p>
-                <p>O arquivo é a entrada. O banco passa a ser o ambiente de trabalho.</p>
-
-                <h4>Isso ficou ainda mais interessante com a grid virtualizada</h4>
-                <p>
-                  No post anterior falei sobre como a interface do Valtron não
-                  carrega centenas de milhares de linhas de uma vez.
-                </p>
-                <p>Ela pede pequenas janelas.</p>
-                <p>É justamente o DuckDB que consegue responder essas solicitações.</p>
-                <p>Algo conceitualmente parecido com:</p>
-                <pre><code>SELECT nome, cpf, cidade
-FROM documento
-WHERE cidade = 'Salvador'
-ORDER BY nome
-LIMIT 100
-OFFSET 1200;</code></pre>
-                <p>
-                  O frontend não precisa receber o dataset inteiro para
-                  descobrir quais são as linhas 1200 até 1299.
-                </p>
-                <p>O banco faz isso.</p>
-                <p>A interface recebe apenas o resultado necessário naquele momento.</p>
-                <p>Isso criou uma separação que considero importante no Valtron:</p>
-                <pre><code>DuckDB
-sabe trabalhar com o dataset
-
-       ↓
-
-Rust
-coordena as operações
-
-       ↓
-
-Frontend
-sabe apresentar o resultado</code></pre>
-
-                <h4>SQL veio praticamente de graça</h4>
-                <p>
-                  Quando os documentos passaram a existir como tabelas no
-                  DuckDB, apareceu outra possibilidade.
-                </p>
-                <p>
-                  Se já existe um banco SQL por trás do Valtron, por que não
-                  permitir que o usuário consulte os documentos diretamente?
-                </p>
-                <p>Foi assim que entrou o console SQL.</p>
-                <p>
-                  Hoje é possível executar consultas <code>SELECT</code> e CTEs
-                  sobre os documentos importados. O console é somente leitura,
-                  justamente para evitar que uma consulta digitada manualmente
-                  altere silenciosamente os dados.
-                </p>
-                <p>Por exemplo:</p>
-                <pre><code>SELECT
-    cidade,
-    COUNT(*) AS quantidade
-FROM documento
-GROUP BY cidade
-ORDER BY quantidade DESC;</code></pre>
-                <p>Isso adicionou uma característica que eu gosto bastante no projeto.</p>
-                <p>Quem não conhece SQL pode usar a interface.</p>
-                <p>Quem conhece SQL pode ir além dela.</p>
-                <p>Os dois trabalham sobre o mesmo conjunto de dados.</p>
-
-                <h4>Depois veio o Data Profiling</h4>
-                <p>
-                  Quando comecei a implementar análise de colunas, a escolha
-                  pelo DuckDB fez ainda mais sentido.
-                </p>
-                <p>Imagine que eu queira saber sobre uma coluna <code>NOTA</code>:</p>
-                <pre><code>quantos valores existem?
-quantos estão vazios?
-quantos são distintos?
-qual o menor valor?
-qual o maior?
-qual a média?
-como os valores estão distribuídos?</code></pre>
-                <p>Eu poderia buscar 600 mil valores para o Rust e calcular tudo.</p>
-                <p>Mas seria estranho fazer isso tendo um motor analítico logo abaixo.</p>
-                <p>É muito mais interessante executar operações próximas dos dados:</p>
-                <pre><code>604.270 registros
-       ↓
-    DuckDB
-       ↓
-COUNT
-DISTINCT
-MIN
-MAX
-AVG
-GROUP BY
-       ↓
-resultado pequeno
-       ↓
-interface</code></pre>
-                <p>
-                  Em vez de transportar centenas de milhares de valores,
-                  transporto o resultado da análise.
-                </p>
-
-                <h4>O mesmo vale para Data Quality</h4>
-                <p>Considere uma regra:</p>
-                <blockquote>A nota deve estar entre 0 e 10.</blockquote>
-                <p>O frontend não precisa receber todas as notas e executar:</p>
-                <pre><code>if (nota &lt; 0 || nota &gt; 10) {
-    // inválido
-}</code></pre>
-                <p>A ideia é deixar o banco encontrar essas linhas.</p>
-                <p>O mesmo princípio pode ser usado para:</p>
-                <pre><code>valores vazios
-duplicidades
-intervalos numéricos
-comprimento
-valores permitidos
-datas inválidas</code></pre>
-                <p>
-                  O Valtron fica responsável por transformar essas operações em
-                  uma experiência visual.
-                </p>
-                <p>O DuckDB continua fazendo o trabalho pesado.</p>
-
-                <h4>E agora as transformações</h4>
-                <p>
-                  Esse mesmo raciocínio está começando a aparecer na parte de
-                  preparação dos dados.
-                </p>
-                <p>Imagine 600 mil nomes:</p>
-                <pre><code>"  JOÃO SILVA  "
-"MARIA SANTOS "
-" PEDRO SOUZA"</code></pre>
-                <p>Quero remover espaços das extremidades.</p>
-                <p>Uma implementação ingênua poderia fazer:</p>
-                <pre><code>buscar 600 mil registros
-        ↓
-Rust
-        ↓
-loop
-        ↓
-alterar um por um
-        ↓
-DuckDB</code></pre>
-                <p>Mas o banco já sabe fazer:</p>
-                <pre><code>UPDATE documento
-SET nome = TRIM(nome);</code></pre>
-                <p>Essa diferença começa a definir bastante a arquitetura do Valtron.</p>
-                <p>Sempre que possível:</p>
-                <blockquote>levar a operação até os dados, e não os dados até a operação.</blockquote>
-
-                <h4>Local-first acabou virando uma característica do projeto</h4>
-                <p>
-                  Outra consequência dessa escolha é que o Valtron consegue
-                  trabalhar localmente.
-                </p>
-                <p>
-                  O usuário importa o arquivo e os dados permanecem no ambiente
-                  da aplicação.
-                </p>
-                <p>
-                  Não é necessário enviar 600 mil registros para uma API apenas
-                  para executar um filtro ou calcular uma distribuição.
-                </p>
-                <p>
-                  Isso é interessante tanto por simplicidade quanto para
-                  situações em que os dados não deveriam sair da máquina.
-                </p>
-                <p>Não significa que o Valtron nunca terá integrações externas.</p>
-                <p>
-                  PostgreSQL, Parquet, APIs ou outros destinos podem fazer
-                  sentido no futuro.
-                </p>
-                <p>
-                  Mas eles podem ser <strong>integrações</strong>, e não
-                  requisitos para a aplicação funcionar.
-                </p>
-
-                <h4>DuckDB não substitui PostgreSQL</h4>
-                <p>Essa distinção é importante.</p>
-                <p>
-                  Eu não escolheria DuckDB simplesmente porque ele é "melhor"
-                  que PostgreSQL.
-                </p>
-                <p>São problemas diferentes.</p>
-                <p>
-                  Se eu estivesse construindo um sistema transacional com vários
-                  usuários simultaneamente criando e atualizando registros,
-                  PostgreSQL provavelmente faria muito mais sentido.
-                </p>
-                <p>O cenário do Valtron é outro:</p>
-                <pre><code>arquivo grande
-     ↓
-processamento local
-     ↓
-consultas analíticas
-     ↓
-profiling
-     ↓
-qualidade
-     ↓
-transformações</code></pre>
-                <p>
-                  Nesse contexto, um banco analítico embutido combina muito bem
-                  com o problema.
-                </p>
-                <p>
-                  A escolha da tecnologia começa pelo tipo de trabalho que ela
-                  precisa executar.
-                </p>
-
-                <h4>O que mais gostei dessa arquitetura</h4>
-                <p>
-                  Talvez a parte mais interessante seja que o DuckDB não aparece
-                  para quem simplesmente quer abrir uma planilha.
-                </p>
-                <p>A pessoa pode:</p>
-                <pre><code>Importar
-Filtrar
-Ordenar
-Analisar
-Editar
-Exportar</code></pre>
-                <p>sem escrever uma única query.</p>
-                <p>Mas por baixo da interface existe um banco executando SQL.</p>
-                <p>É como se o Valtron tivesse duas formas de trabalhar:</p>
-                <pre><code>              Valtron
-
-        ┌────────┴────────┐
-        │                 │
-   Interface visual      SQL
-        │                 │
-        └────────┬────────┘
-                 │
-              DuckDB
-                 │
-               dados</code></pre>
-                <p>
-                  Essa combinação está permitindo que o projeto cresça sem
-                  precisar reinventar operações fundamentais de processamento de
-                  dados.
-                </p>
-                <p>
-                  No próximo post quero falar sobre uma decisão que parece
-                  contraditória à primeira vista:
-                </p>
-                <blockquote>se o Valtron quer entender os dados, por que ele importa inicialmente as colunas como texto?</blockquote>
-                <p>
-                  A resposta tem mais relação com preservar o dado original do
-                  que com limitações de tipagem.
-                </p>
-              </article>
-
-              <article id="post-importar-como-texto" class="post-card post-prose">
-                <div class="post-meta">
-                  <span>Data Profiling</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <a class="post-permalink" href="posts/importar-como-texto/">Link desta postagem</a>
-                <h3>Por que o Valtron importa os dados como texto antes de tentar entendê-los</h3>
-                <p>
-                  Quando comecei a trabalhar na importação do Valtron, tomei
-                  uma decisão que pode parecer estranha:
-                </p>
-                <p><strong>as colunas de um arquivo são inicialmente importadas como texto.</strong></p>
-                <p>Mesmo quando os valores parecem números, datas ou valores decimais.</p>
-                <p>Por exemplo:</p>
-                <pre><code>NOME            NOTA        NASCIMENTO
-João            8.5         1992-02-05
-Maria           9.2         33639
-Pedro           7           05/10/1995</code></pre>
-                <p>Seria natural transformar imediatamente:</p>
-                <pre><code>NOTA        → DECIMAL
-NASCIMENTO  → DATE</code></pre>
-                <p>Mas existe um problema.</p>
-                <p>Dados reais nem sempre são tão organizados quanto parecem.</p>
-
-                <h4>O arquivo diz menos do que imaginamos</h4>
-                <p>Considere uma coluna chamada <code>CPF</code>:</p>
-                <pre><code>03000484590
-3000484590
-123.456.789-00
-NULL</code></pre>
-                <p>O que ela é?</p>
-                <p>Para uma pessoa, parece óbvio que estamos olhando CPFs.</p>
-                <p>Para o computador, são apenas valores.</p>
-                <p>Agora imagine uma coluna:</p>
-                <pre><code>CODIGO
-
-000123
-000124
-000125</code></pre>
-                <p>Se eu inferir automaticamente que isso é um número, posso transformar:</p>
-                <pre><code>000123</code></pre>
-                <p>em:</p>
-                <pre><code>123</code></pre>
-                <p>Tecnicamente o número é equivalente.</p>
-                <p>Para o dado original, talvez não seja.</p>
-                <p>Os zeros podem fazer parte do identificador.</p>
-
-                <h4>Datas conseguem ser ainda mais interessantes</h4>
-                <p>Recentemente encontrei um bom exemplo disso.</p>
-                <p>Uma coluna de data de nascimento continha:</p>
-                <pre><code>33639</code></pre>
-                <p>Olhando isoladamente, parece apenas um inteiro.</p>
-                <p>
-                  Mas esse valor pode representar uma data armazenada como
-                  <strong>serial do Excel</strong>.
-                </p>
-                <p>Ou seja:</p>
-                <pre><code>33639</code></pre>
-                <p>pode ser interpretado como uma data no sistema utilizado pelo Excel.</p>
-                <p>Agora imagine que durante a importação eu simplesmente decida:</p>
-                <pre><code>33639 → INTEGER</code></pre>
-                <p>
-                  A informação não necessariamente foi perdida, mas a decisão
-                  sobre o significado daquele valor foi tomada cedo demais.
-                </p>
-                <p>
-                  E esse é exatamente o tipo de decisão que comecei a evitar no
-                  Valtron.
-                </p>
-
-                <h4>Armazenar é diferente de interpretar</h4>
-                <p>Passei a separar duas coisas:</p>
-                <pre><code>VALOR ORIGINAL
-      ↓
-   "33639"
-
-INTERPRETAÇÃO
-      ↓
-possível serial de data do Excel</code></pre>
-                <p>O primeiro pertence ao armazenamento.</p>
-                <p>O segundo pertence à análise.</p>
-                <p>Essa separação é importante.</p>
-                <p>O Valtron pode dizer:</p>
-                <pre><code>DATA_NASCIMENTO
-
-Tipo provável:
-Data
-
-Formato predominante:
-Serial de data do Excel</code></pre>
-                <p>sem precisar modificar:</p>
-                <pre><code>33639</code></pre>
-                <p>para:</p>
-                <pre><code>05/02/1992</code></pre>
-                <p>O dado continua intacto.</p>
-                <p>A interpretação pode evoluir.</p>
-
-                <h4>É por isso que uso all_varchar</h4>
-                <p>
-                  No caminho principal de importação XLSX, o Valtron utiliza o
-                  <code>read_xlsx</code> do DuckDB com
-                  <code>all_varchar = true</code>. As colunas importadas são
-                  preservadas inicialmente como <code>VARCHAR</code>.
-                </p>
-                <p>Conceitualmente:</p>
-                <pre><code>CREATE TABLE documento AS
-SELECT *
-FROM read_xlsx(
-    'arquivo.xlsx',
-    header = true,
-    all_varchar = true
-);</code></pre>
-                <p>Isso significa que valores como:</p>
-                <pre><code>000123
-8.50
-33639
-03000484590</code></pre>
-                <p>
-                  podem ser preservados sem o Valtron tentar decidir
-                  imediatamente o que representam.
-                </p>
-                <p>Depois entra outra camada.</p>
-
-                <h4>Data Profiling</h4>
-                <p>
-                  Depois que os dados estão no DuckDB, o Valtron pode começar a
-                  fazer perguntas.
-                </p>
-                <p>Por exemplo:</p>
-                <pre><code>Quantos valores estão vazios?
-
-Quantos são distintos?
-
-Os valores parecem números?
-
-Parecem datas?
-
-Qual o tamanho mínimo e máximo?
-
-Quais valores aparecem com mais frequência?</code></pre>
-                <p>É aí que entra o <strong>Data Profiling</strong>.</p>
-                <p>Em vez de decidir durante a importação:</p>
-                <pre><code>essa coluna É decimal</code></pre>
-                <p>o Valtron pode concluir:</p>
-                <pre><code>essa coluna PARECE decimal</code></pre>
-                <p>Existe uma diferença importante entre as duas frases.</p>
-                <p>A primeira altera a forma como o dado será armazenado.</p>
-                <p>A segunda fornece informação para o usuário tomar uma decisão.</p>
-
-                <h4>Inferência precisa aceitar que pode estar errada</h4>
-                <p>Imagine:</p>
-                <pre><code>NOTA
-
-8.5
-7.2
-9.1
-10
-NÃO INFORMADO
-8.0</code></pre>
-                <p>A maior parte dos valores parece decimal.</p>
-                <p>Mas existe:</p>
-                <pre><code>NÃO INFORMADO</code></pre>
-                <p>
-                  Se eu tentar converter a coluna inteira durante a importação,
-                  preciso decidir o que fazer com esse registro.
-                </p>
-                <p>Falhar a importação?</p>
-                <p>Transformar em <code>NULL</code>?</p>
-                <p>Ignorar?</p>
-                <p>Modificar o valor?</p>
-                <p>Qualquer uma dessas opções já é uma decisão sobre os dados.</p>
-                <p>No profiling posso simplesmente dizer:</p>
-                <pre><code>NOTA
-
-Decimal provável
-
-99,8% compatíveis
-0,2% incompatíveis</code></pre>
-                <p>E deixar o usuário investigar os casos restantes.</p>
-                <p>Isso me parece muito mais seguro.</p>
-
-                <h4>Profiling e tipagem são coisas diferentes</h4>
-                <p>Esse conceito começou a ficar importante na arquitetura do Valtron.</p>
-                <pre><code>TIPO FÍSICO
-
-VARCHAR
-
-       ↓
-
-PROFILING
-
-99,8% dos valores
-parecem decimais
-
-       ↓
-
-TIPO PROVÁVEL
-
-Decimal</code></pre>
-                <p>O tipo físico diz como o valor está armazenado.</p>
-                <p>O tipo provável diz como o Valtron interpreta aquele conteúdo.</p>
-                <p>Essas duas informações não precisam ser iguais.</p>
-
-                <h4>Depois vem Data Quality</h4>
-                <p>
-                  Quando sabemos o que uma coluna provavelmente representa,
-                  podemos começar a perguntar se os valores fazem sentido.
-                </p>
-                <p>Por exemplo:</p>
-                <pre><code>CPF
-
-604.270 registros
-
-5.849 vazios
-12.421 com tamanho incorreto
-18.011 inválidos
-2.182 duplicados</code></pre>
-                <p>Isso já é diferente de profiling.</p>
-                <p>Profiling pergunta:</p>
-                <blockquote>O que existe aqui?</blockquote>
-                <p>Data Quality pergunta:</p>
-                <blockquote>O que existe aqui respeita as regras que eu espero?</blockquote>
-                <p>
-                  Um CPF pode estar armazenado perfeitamente como texto e ainda
-                  ser um CPF inválido.
-                </p>
-                <p>
-                  Uma nota pode ser perfeitamente convertível para decimal e
-                  ainda possuir valor:
-                </p>
-                <pre><code>15.7</code></pre>
-                <p>quando a regra aceita apenas:</p>
-                <pre><code>0 até 10</code></pre>
-                <p>Tipagem e qualidade também são problemas diferentes.</p>
-
-                <h4>E só depois vem transformação</h4>
-                <p>Essa separação começou a formar um fluxo que gosto bastante:</p>
-                <pre><code>IMPORTAR
-   ↓
-PRESERVAR
-   ↓
-ANALISAR
-   ↓
-VALIDAR
-   ↓
-TRANSFORMAR</code></pre>
-                <p>Por exemplo:</p>
-                <pre><code>CPF original
-
-030.004.845-90</code></pre>
-                <p>O Valtron pode primeiro identificar:</p>
-                <pre><code>Texto provável
-14 caracteres
-formatação presente</code></pre>
-                <p>Depois validar:</p>
-                <pre><code>CPF válido?</code></pre>
-                <p>E somente quando o usuário decidir transformar:</p>
-                <pre><code>030.004.845-90
-
-       ↓
-
-Remover pontuação
-
-       ↓
-
-03000484590</code></pre>
-                <p>Nesse momento existe uma intenção explícita de modificar o dado.</p>
-
-                <h4>Preview antes de alterar</h4>
-                <p>
-                  Essa ideia também está direcionando a parte de transformação
-                  que estou desenvolvendo.
-                </p>
-                <p>
-                  Antes de modificar centenas de milhares de registros, quero
-                  que o Valtron consiga mostrar algo assim:
-                </p>
-                <pre><code>NORMALIZAR CPF
-
-Original             Resultado
-────────────────────────────────
-030.004.845-90       03000484590
-123.456.789-00       12345678900
-3000484590           03000484590
-
-12.391 valores serão alterados
-
-[ Cancelar ]    [ Aplicar ]</code></pre>
-                <p>
-                  A diferença é que agora a transformação não aconteceu porque
-                  um algoritmo decidiu durante a importação.
-                </p>
-                <p>
-                  Ela aconteceu porque o usuário viu o impacto e decidiu
-                  aplicar.
-                </p>
-
-                <h4>O princípio que ficou</h4>
-                <p>
-                  No começo, <code>all_varchar = true</code> era principalmente
-                  uma decisão técnica relacionada à importação.
-                </p>
-                <p>
-                  Com a evolução do Valtron, percebi que ela também combina com
-                  uma decisão de produto.
-                </p>
-                <p>
-                  <strong>Preservar primeiro. Interpretar depois. Transformar somente quando houver intenção.</strong>
-                </p>
-                <p>
-                  Isso não significa que armazenar tudo como texto seja a melhor
-                  estratégia para qualquer sistema.
-                </p>
-                <p>
-                  Em um sistema transacional, eu quero tipos fortes, constraints
-                  e regras bem definidas no banco.
-                </p>
-                <p>Mas o Valtron recebe arquivos que ele não conhece previamente.</p>
-                <p>É um cenário diferente.</p>
-                <p>
-                  Quando alguém entrega uma planilha com 600 mil registros, eu
-                  prefiro que o Valtron comece perguntando:
-                </p>
-                <blockquote>O que existe nesses dados?</blockquote>
-                <p>em vez de começar afirmando:</p>
-                <blockquote>Eu já sei o que esses dados significam.</blockquote>
-                <p>
-                  No próximo post quero entrar justamente nessa etapa:
-                  <strong>como o Data Profiling pode ajudar a entender centenas
-                  de milhares de registros sem precisar escrever várias
-                  consultas SQL manualmente.</strong>
-                </p>
-              </article>
-
-              <article id="post-data-profiling-600-mil" class="post-card post-prose">
-                <div class="post-meta">
-                  <span>Data Profiling</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <a class="post-permalink" href="posts/data-profiling-600-mil/">Link desta postagem</a>
-                <h3>Data Profiling: entendendo 600 mil registros sem escrever várias queries</h3>
-                <p>
-                  Depois de conseguir importar arquivos grandes e navegar pelos
-                  dados sem travar a interface, comecei a pensar em outro
-                  problema.
-                </p>
-                <p><strong>Como entender rapidamente o que existe em uma coluna?</strong></p>
-                <p>
-                  Imagine receber uma planilha com mais de 600 mil registros e
-                  encontrar uma coluna chamada:
-                </p>
-                <pre><code>NOTA</code></pre>
-                <p>
-                  Antes de trabalhar com ela, algumas perguntas aparecem
-                  naturalmente:
-                </p>
-                <pre><code>Quantos registros estão preenchidos?
-
-Quantos estão vazios?
-
-Quantos valores diferentes existem?
-
-Qual é o menor valor?
-
-Qual é o maior?
-
-A coluna realmente contém números?
-
-Existem valores estranhos?
-
-Quais valores aparecem com mais frequência?</code></pre>
-                <p>Todas essas perguntas podem ser respondidas com SQL.</p>
-                <p>O problema é ter que fazer isso manualmente para cada coluna.</p>
-                <p>
-                  Foi aí que comecei a trabalhar com <strong>Data Profiling</strong>
-                  no Valtron.
-                </p>
-
-                <h4>O que é Data Profiling?</h4>
-                <p>
-                  De forma simples, Data Profiling é analisar um conjunto de
-                  dados para entender sua estrutura, distribuição e
-                  características.
-                </p>
-                <p>Não é necessariamente procurar erros.</p>
-                <p>É primeiro entender o que existe.</p>
-                <p>Por exemplo, uma coluna pode apresentar:</p>
-                <pre><code>NOTA
-
-604.270 registros
-598.421 preenchidos
-5.849 vazios
-
-572 valores distintos
-
-Mínimo: 0
-Máximo: 10
-Média: 7,3
-
-Tipo provável:
-Decimal</code></pre>
-                <p>
-                  Com essas informações já consigo entender bastante coisa sem
-                  precisar percorrer milhares de registros visualmente.
-                </p>
-
-                <h4>Isso tudo já poderia ser feito com SQL</h4>
-                <p>Sim.</p>
-                <p>Por exemplo, para descobrir valores vazios:</p>
-                <pre><code>SELECT COUNT(*)
-FROM documento
-WHERE nota IS NULL
-   OR TRIM(nota) = '';</code></pre>
-                <p>Para valores distintos:</p>
-                <pre><code>SELECT COUNT(DISTINCT nota)
-FROM documento;</code></pre>
-                <p>Para descobrir os valores mais frequentes:</p>
-                <pre><code>SELECT
-    nota,
-    COUNT(*) AS quantidade
-FROM documento
-GROUP BY nota
-ORDER BY quantidade DESC
-LIMIT 10;</code></pre>
-                <p>E assim por diante.</p>
-                <p>O banco já sabe responder essas perguntas.</p>
-                <p>O trabalho do Valtron é outro.</p>
-                <p>
-                  Ele precisa transformar várias dessas perguntas em uma
-                  experiência de exploração.
-                </p>
-                <pre><code>usuário
-   ↓
-Analisar coluna
-   ↓
-Valtron
-   ↓
-consultas analíticas
-   ↓
-DuckDB
-   ↓
-resultado
-   ↓
-painel visual</code></pre>
-                <p>Em vez de escrever cinco ou dez consultas, clico na coluna.</p>
-
-                <h4>O banco continua fazendo o trabalho pesado</h4>
-                <p>
-                  Uma decisão importante foi não trazer centenas de milhares de
-                  valores para o frontend para calcular essas estatísticas.
-                </p>
-                <p>Não faria sentido:</p>
-                <pre><code>604.270 valores
-      ↓
-Rust
-      ↓
-TypeScript
-      ↓
-calcular estatísticas</code></pre>
-                <p>Já existe um motor analítico trabalhando localmente.</p>
-                <p>Então prefiro:</p>
-                <pre><code>604.270 valores
-      ↓
-DuckDB
-      ↓
-COUNT
-DISTINCT
-MIN
-MAX
-AVG
-GROUP BY
-      ↓
-resultado pequeno
-      ↓
-interface</code></pre>
-                <p>Essa diferença é importante.</p>
-                <p>
-                  O frontend não precisa conhecer todos os valores de uma coluna
-                  para saber que existem 5.849 vazios.
-                </p>
-                <p>Ele só precisa receber:</p>
-                <pre><code>empty_count = 5849</code></pre>
-
-                <h4>Mas existe uma diferença entre o tipo armazenado e o tipo provável</h4>
-                <p>
-                  No post anterior expliquei por que o Valtron inicialmente
-                  preserva as colunas importadas como texto.
-                </p>
-                <p>Isso cria uma situação interessante.</p>
-                <p>
-                  Para o DuckDB, uma coluna pode estar fisicamente armazenada
-                  como:
-                </p>
-                <pre><code>VARCHAR</code></pre>
-                <p>Mas seu conteúdo pode ser:</p>
-                <pre><code>8.5
-7.2
-9.0
-6.7
-10</code></pre>
-                <p>O profiling pode analisar esses valores e concluir:</p>
-                <pre><code>Tipo físico:
-VARCHAR
-
-Tipo provável:
-Decimal</code></pre>
-                <p>
-                  Isso permite preservar o arquivo original e, ao mesmo tempo,
-                  entender melhor o conteúdo.
-                </p>
-
-                <h4>O tipo provável não pode ser uma verdade absoluta</h4>
-                <p>Agora considere:</p>
-                <pre><code>8.5
-7.2
-9.0
-NÃO INFORMADO
-10</code></pre>
-                <p>A coluna ainda parece numérica.</p>
-                <p>Mas não é 100% compatível com números.</p>
-                <p>Por isso gosto mais da ideia de trabalhar com evidências:</p>
-                <pre><code>NOTA
-
-Decimal provável
-
-99,8% dos valores
-compatíveis com decimal</code></pre>
-                <p>em vez de simplesmente afirmar:</p>
-                <pre><code>NOTA É DECIMAL</code></pre>
-                <p>
-                  Essa distinção parece pequena, mas é importante quando estamos
-                  trabalhando com dados que vieram de fora e cuja qualidade
-                  ainda não conhecemos.
-                </p>
-
-                <h4>Um exemplo ainda mais curioso: datas</h4>
-                <p>Considere uma coluna:</p>
-                <pre><code>DATA_NASCIMENTO
-
-33639
-34122
-35001</code></pre>
-                <p>Olhando rapidamente, parece uma coluna de inteiros.</p>
-                <p>
-                  Mas esses valores podem ser datas armazenadas como números
-                  seriais do Excel.
-                </p>
-                <p>
-                  O profiling pode detectar que uma grande parte dos valores é
-                  compatível com esse padrão e apresentar algo como:
-                </p>
-                <pre><code>DATA_NASCIMENTO
-
-Data provável
-
-Formato predominante:
-Serial de data do Excel
-
-Exemplo:
-
-33639
-↓
-05/02/1992</code></pre>
-                <p>
-                  O ponto importante é que o Valtron <strong>não precisa alterar
-                  <code>33639</code> para entender que aquilo pode representar
-                  uma data</strong>.
-                </p>
-                <p>Profiling é interpretação.</p>
-                <p>Transformação é outra etapa.</p>
-
-                <h4>Distribuição também conta uma história</h4>
-                <p>Média, mínimo e máximo são úteis para números.</p>
-                <p>Mas muitas colunas são categóricas.</p>
-                <p>Por exemplo:</p>
-                <pre><code>TURNO
-
-MATUTINO
-VESPERTINO
-NOTURNO</code></pre>
-                <p>Nesse caso, talvez seja mais interessante mostrar:</p>
-                <pre><code>MATUTINO       284.120   47%
-VESPERTINO     211.843   35%
-NOTURNO        108.307   18%</code></pre>
-                <p>Isso permite perceber rapidamente como os dados estão distribuídos.</p>
-                <p>Também pode revelar algo estranho:</p>
-                <pre><code>MATUTINO
-Matutino
-matutino
-MAT
-M</code></pre>
-                <p>Talvez sejam cinco categorias diferentes.</p>
-                <p>Talvez sejam cinco maneiras diferentes de representar a mesma coisa.</p>
-                <p>O profiling não precisa decidir isso.</p>
-                <p>Ele precisa <strong>tornar isso visível</strong>.</p>
-
-                <h4>E é aí que profiling começa a conversar com qualidade</h4>
-                <p>Imagine que o profiling mostre:</p>
-                <pre><code>TURNO
-
-5 valores distintos
-
-MATUTINO
-VESPERTINO
-NOTURNO
-MAT
-VESP</code></pre>
-                <p>O próximo pensamento provavelmente será:</p>
-                <blockquote>Eu esperava apenas MATUTINO, VESPERTINO e NOTURNO.</blockquote>
-                <p>Isso já não é mais uma pergunta sobre o que existe.</p>
-                <p>É uma pergunta sobre o que <strong>deveria existir</strong>.</p>
-                <p>E aí entramos em Data Quality.</p>
-                <p>A separação que estou usando no Valtron é:</p>
-                <pre><code>PROFILING
-
-"O que existe?"
-
-       ↓
-
-QUALITY
-
-"Isso está de acordo
-com o que eu espero?"</code></pre>
-
-                <h4>O clique precisa levar até os dados</h4>
-                <p>
-                  Outra coisa que considero importante é evitar transformar
-                  profiling em um dashboard bonito que termina nele mesmo.
-                </p>
-                <p>Se o painel mostrar:</p>
-                <pre><code>5.849 valores vazios</code></pre>
-                <p>quero poder clicar nesse número e ver exatamente essas linhas.</p>
-                <p>Se mostrar:</p>
-                <pre><code>MAT
-1.283 registros</code></pre>
-                <p>
-                  quero clicar em <code>MAT</code> e chegar nesses 1.283
-                  registros.
-                </p>
-                <p>O fluxo fica:</p>
-                <pre><code>estatística
-    ↓
-clique
-    ↓
-filtro
-    ↓
-grid
-    ↓
-registros reais</code></pre>
-                <p>Isso transforma profiling em ferramenta de investigação.</p>
-                <p>Não apenas em relatório.</p>
-
-                <h4>O mesmo vale para grandes volumes</h4>
-                <p>
-                  Se uma coluna possui 600 mil registros, o profiling não deve
-                  significar carregar os 600 mil no navegador.
-                </p>
-                <p>O DuckDB analisa.</p>
-                <p>O backend devolve resultados agregados.</p>
-                <p>A grid continua virtualizada.</p>
-                <p>
-                  Quando o usuário decide investigar alguma coisa, somente a
-                  janela necessária é carregada.
-                </p>
-                <pre><code>600.000 registros
-       │
-       ▼
-     DuckDB
-       │
-       ├── profiling
-       │      ↓
-       │   estatísticas
-       │
-       └── filtro
-              ↓
-         100 registros
-              ↓
-             grid</code></pre>
-                <p>
-                  É a mesma filosofia que venho usando em outras partes do
-                  Valtron:
-                </p>
-                <p>
-                  <strong>manter o trabalho pesado próximo dos dados e
-                  transportar somente aquilo que a interface realmente
-                  precisa.</strong>
-                </p>
-
-                <h4>Profiling não substitui conhecimento sobre os dados</h4>
-                <p>Esse também é um limite importante.</p>
-                <p>O Valtron pode descobrir:</p>
-                <pre><code>99,7% dos valores possuem 11 caracteres</code></pre>
-                <p>Mas isso não significa automaticamente:</p>
-                <pre><code>essa coluna contém CPFs válidos</code></pre>
-                <p>Pode identificar:</p>
-                <pre><code>valores entre 0 e 10</code></pre>
-                <p>mas não sabe necessariamente que aquilo deveria ser uma nota.</p>
-                <p>
-                  Existe uma diferença entre descobrir padrões e conhecer a
-                  regra de negócio.
-                </p>
-                <p>Por isso estou separando:</p>
-                <pre><code>Profiling
-↓
-descobrir características
-
-Quality Rules
-↓
-declarar expectativas</code></pre>
-
-                <h4>O que mudou no Valtron</h4>
-                <p>No começo, a pergunta principal era:</p>
-                <blockquote>Consigo abrir esse arquivo rapidamente?</blockquote>
-                <p>Depois passou a ser:</p>
-                <blockquote>Consigo navegar por ele sem travar?</blockquote>
-                <p>Agora surgiu outra:</p>
-                <blockquote>Consigo entender o que existe nele sem começar escrevendo várias consultas?</blockquote>
-                <p>
-                  Essa terceira pergunta está aproximando o Valtron mais de uma
-                  ferramenta de análise e preparação de dados do que de um
-                  simples visualizador de planilhas.
-                </p>
-                <p>O fluxo começa a ficar:</p>
-                <pre><code>IMPORTAR
-   ↓
-EXPLORAR
-   ↓
-ENTENDER
-   ↓
-VALIDAR
-   ↓
-TRANSFORMAR</code></pre>
-                <p>E a próxima etapa é justamente a validação.</p>
-                <p>
-                  No próximo post vou falar sobre <strong>Data Quality e a
-                  diferença entre descobrir que uma coluna parece conter CPFs e
-                  verificar se esses CPFs realmente são válidos</strong>.
-                </p>
-              </article>
-
-              <article id="post-data-quality" class="post-card post-prose">
-                <div class="post-meta">
-                  <span>Data Quality</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <a class="post-permalink" href="posts/data-quality/">Link desta postagem</a>
-                <h3>Data Quality: entender os dados não significa que eles estão corretos</h3>
-                <p>
-                  No último post falei sobre Data Profiling e como comecei a
-                  usar o DuckDB para entender melhor as colunas importadas pelo
-                  Valtron.
-                </p>
-                <p>O profiling consegue responder perguntas como:</p>
-                <pre><code>Quantos valores estão vazios?
-Quantos são distintos?
-Qual é o tamanho dos valores?
-Quais aparecem com mais frequência?
-A coluna parece numérica?
-Parece uma data?</code></pre>
-                <p>
-                  Só que, depois de implementar isso, apareceu uma diferença
-                  importante.
-                </p>
-                <p>
-                  <strong>Entender o que existe nos dados não significa saber se
-                  os dados estão corretos.</strong>
-                </p>
-                <p>É aí que entra Data Quality.</p>
-
-                <h4>Uma coluna pode parecer perfeita e ainda estar errada</h4>
-                <p>Imagine uma coluna chamada <code>NOTA</code>:</p>
-                <pre><code>7.5
-8.2
-9.0
-15.3
-6.8</code></pre>
-                <p>O profiling consegue concluir corretamente:</p>
-                <pre><code>Tipo provável: Decimal
-Preenchimento: 100%</code></pre>
-                <p>Tecnicamente, está tudo certo.</p>
-                <p>Todos os valores são números.</p>
-                <p>Mas existe um problema se a regra do sistema disser:</p>
-                <pre><code>A nota deve estar entre 0 e 10.</code></pre>
-                <p>Nesse caso:</p>
-                <pre><code>15.3</code></pre>
-                <p>
-                  é um valor perfeitamente numérico e, ao mesmo tempo, um dado
-                  inválido.
-                </p>
-                <p>
-                  Essa diferença fez sentido para separar duas responsabilidades
-                  no Valtron:
-                </p>
-                <pre><code>PROFILING
-"O que existe?"
-
-QUALITY
-"O que existe está de acordo
-com o que eu espero?"</code></pre>
-
-                <h4>CPF é outro bom exemplo</h4>
-                <p>Considere:</p>
-                <pre><code>03000484590
-12345678901
-11111111111
-3000484590</code></pre>
-                <p>O profiling pode descobrir:</p>
-                <pre><code>Tipo provável: Texto
-
-Comprimento predominante: 11
-
-Valores preenchidos: 100%</code></pre>
-                <p>Mas ainda existem outras perguntas:</p>
-                <pre><code>Possui exatamente 11 dígitos?
-
-É um CPF matematicamente válido?
-
-Está duplicado?
-
-É obrigatório?</code></pre>
-                <p>Ter 11 dígitos não torna um CPF válido.</p>
-                <p>
-                  Da mesma forma, conseguir converter algo para número não
-                  significa que aquilo deveria ser um número.
-                </p>
-                <p>
-                  Data Quality começa quando existe uma <strong>expectativa
-                  sobre o dado</strong>.
-                </p>
-
-                <h4>Foi daí que surgiram as regras</h4>
-                <p>
-                  No Valtron, comecei a trabalhar com regras que podem ser
-                  associadas às colunas.
-                </p>
-                <p>Por exemplo:</p>
-                <pre><code>CPF
-
-✓ Obrigatório
-✓ Comprimento = 11
-✓ CPF válido
-✓ Valor único</code></pre>
-                <p>
-                  Depois o DuckDB pode analisar o documento e retornar algo
-                  parecido com:
-                </p>
-                <pre><code>CPF
-
-604.270 registros
-
-5.849 vazios
-12.421 com tamanho incorreto
-18.011 CPFs inválidos
-2.182 registros duplicados</code></pre>
-                <p>Isso muda bastante a forma de investigar um arquivo.</p>
-                <p>
-                  Em vez de descobrir um problema por acaso enquanto navego pela
-                  planilha, consigo perguntar explicitamente:
-                </p>
-                <blockquote>Quais registros não respeitam minhas regras?</blockquote>
-
-                <h4>O banco já consegue fazer boa parte disso</h4>
-                <p>
-                  Assim como aconteceu com profiling, muitas validações podem
-                  ser expressas em SQL.
-                </p>
-                <p>Para verificar valores obrigatórios:</p>
-                <pre><code>SELECT COUNT(*)
-FROM documento
-WHERE cpf IS NULL
-   OR TRIM(cpf) = '';</code></pre>
-                <p>Para comprimento:</p>
-                <pre><code>SELECT COUNT(*)
-FROM documento
-WHERE LENGTH(TRIM(cpf)) <> 11;</code></pre>
-                <p>Para duplicidades:</p>
-                <pre><code>SELECT cpf, COUNT(*)
-FROM documento
-GROUP BY cpf
-HAVING COUNT(*) > 1;</code></pre>
-                <p>
-                  O interessante não é inventar outra maneira de executar essas
-                  operações.
-                </p>
-                <p>
-                  É criar uma camada que organize essas consultas como
-                  <strong>regras de qualidade</strong>.
-                </p>
-                <pre><code>Regra visual
-     ↓
-Valtron
-     ↓
-condição conhecida
-     ↓
-DuckDB
-     ↓
-violações</code></pre>
-                <p>O usuário trabalha com o conceito:</p>
-                <pre><code>CPF deve ser único</code></pre>
-                <p>e não necessariamente com:</p>
-                <pre><code>GROUP BY cpf
-HAVING COUNT(*) > 1</code></pre>
-
-                <h4>E quem conhece SQL?</h4>
-                <p>Continua podendo usar SQL.</p>
-                <p>Essa é uma característica que quero preservar.</p>
-                <p>A interface não precisa substituir SQL.</p>
-                <p>Ela pode funcionar como uma camada acima dele.</p>
-                <p>Quem quer investigar visualmente pode usar:</p>
-                <pre><code>Qualidade
-→ CPF válido
-→ 18.011 violações
-→ Ver registros</code></pre>
-                <p>Quem prefere SQL continua tendo o console disponível.</p>
-                <p>São maneiras diferentes de chegar aos mesmos dados.</p>
-
-                <h4>As regras precisam ser explícitas</h4>
-                <p>
-                  Uma decisão importante foi não tentar adivinhar
-                  automaticamente todas as regras.
-                </p>
-                <p>Imagine uma coluna:</p>
-                <pre><code>IDADE</code></pre>
-                <p>O Valtron poderia perceber que ela contém números.</p>
-                <p>Mas qual seria o intervalo válido?</p>
-                <pre><code>0 a 100?
-0 a 120?
-18 a 65?</code></pre>
-                <p>Depende do contexto.</p>
-                <p>Ou uma coluna:</p>
-                <pre><code>STATUS</code></pre>
-                <p>Talvez os valores válidos sejam:</p>
-                <pre><code>ATIVO
-INATIVO</code></pre>
-                <p>Em outro sistema poderiam ser:</p>
-                <pre><code>PENDENTE
-APROVADO
-REPROVADO
-CANCELADO</code></pre>
-                <p>O profiling consegue ajudar a descobrir o que existe.</p>
-                <p>Mas a regra de negócio precisa vir de algum lugar.</p>
-                <p>
-                  Por isso prefiro que a primeira versão das regras seja
-                  determinística e explícita.
-                </p>
-
-                <h4>Algumas regras são genéricas</h4>
-                <p>Existem validações que fazem sentido em muitos contextos:</p>
-                <pre><code>Obrigatório
-Único
-Comprimento
-Numérico
-Intervalo numérico
-Valores permitidos
-Data válida
-Expressão regular
-E-mail válido
-CPF válido</code></pre>
-                <p>Então posso configurar:</p>
-                <pre><code>NOTA
-
-Regra:
-Intervalo numérico
-
-Mínimo: 0
-Máximo: 10</code></pre>
-                <p>ou:</p>
-                <pre><code>TURNO
-
-Valores permitidos:
-
-MATUTINO
-VESPERTINO
-NOTURNO</code></pre>
-                <p>O Valtron não precisa conhecer o sistema que gerou o arquivo.</p>
-                <p>Ele só precisa saber executar a regra.</p>
-
-                <h4>Datas mostraram um caso interessante</h4>
-                <p>Durante os testes encontrei valores como:</p>
-                <pre><code>33639</code></pre>
-                <p>em uma coluna de data de nascimento.</p>
-                <p>Uma validação configurada para:</p>
-                <pre><code>YYYY/MM/DD</code></pre>
-                <p>naturalmente considera <code>33639</code> inválido.</p>
-                <p>
-                  Só que esse número pode representar uma data no sistema de
-                  datas do Excel.
-                </p>
-                <p>Isso mostrou outro cuidado importante.</p>
-                <p>Uma regra precisa saber distinguir:</p>
-                <pre><code>valor armazenado</code></pre>
-                <p>de:</p>
-                <pre><code>valor interpretado</code></pre>
-                <p>O Valtron pode reconhecer:</p>
-                <pre><code>33639
-↓
-Serial de data do Excel
-↓
-data válida</code></pre>
-                <p>sem alterar o <code>33639</code> original.</p>
-                <p>
-                  Essa separação entre <strong>interpretar, validar e
-                  transformar</strong> começou a aparecer várias vezes durante o
-                  desenvolvimento.
-                </p>
-
-                <h4>Uma linha pode quebrar várias regras</h4>
-                <p>
-                  Outro problema interessante apareceu quando comecei a pensar
-                  no score de qualidade.
-                </p>
-                <p>Imagine:</p>
-                <pre><code>CPF = ""</code></pre>
-                <p>Esse registro pode violar:</p>
-                <pre><code>Obrigatório
-Comprimento = 11
-CPF válido</code></pre>
-                <p>Se simplesmente somarmos todas as violações, teremos três problemas.</p>
-                <p>Mas existe apenas <strong>uma linha problemática</strong>.</p>
-                <p>Então existem duas métricas diferentes:</p>
-                <pre><code>Violações de regras</code></pre>
-                <p>e:</p>
-                <pre><code>Registros com pelo menos um problema</code></pre>
-                <p>Isso importa bastante para calcular um indicador geral.</p>
-                <p>Imagine:</p>
-                <pre><code>604.270 registros
-
-36.281 possuem pelo menos
-um problema</code></pre>
-                <p>O score pode ser calculado sobre as linhas válidas:</p>
-                <pre><code>567.989 / 604.270
-
-≈ 94%</code></pre>
-                <p>Sem contar a mesma linha três ou quatro vezes.</p>
-
-                <h4>O número sozinho também pode enganar</h4>
-                <p>Mostrar:</p>
-                <pre><code>Qualidade: 99%</code></pre>
-                <p>parece excelente.</p>
-                <p>Mas em uma base com 4 milhões de registros, 1% significa:</p>
-                <pre><code>40.000 registros</code></pre>
-                <p>Por isso quero evitar depender apenas de cores ou percentuais.</p>
-                <p>Prefiro algo como:</p>
-                <pre><code>QUALIDADE
-
-99%
-
-4.000.000 registros
-40.000 com problemas</code></pre>
-                <p>Percentual fornece proporção.</p>
-                <p>Quantidade fornece dimensão.</p>
-                <p>Os dois juntos contam melhor a história.</p>
-
-                <h4>Clicar no problema precisa mostrar o problema</h4>
-                <p>
-                  Assim como no profiling, quero evitar um painel que apenas
-                  apresenta números.
-                </p>
-                <p>Se o Valtron disser:</p>
-                <pre><code>CPF inválido
-18.011 violações</code></pre>
-                <p>esse número precisa ser clicável.</p>
-                <p>O fluxo:</p>
-                <pre><code>CPF inválido
-18.011
-    ↓
-clique
-    ↓
-grid filtrada
-    ↓
-18.011 registros</code></pre>
-                <p>
-                  A mesma condição utilizada para contar as violações precisa
-                  ser usada para filtrar a grid.
-                </p>
-                <p>
-                  Isso parece detalhe de implementação, mas evita uma situação
-                  bastante ruim:
-                </p>
-                <pre><code>Painel:
-18.011 problemas
-
-Grid:
-17.982 registros</code></pre>
-                <p>
-                  Quando uma ferramenta analisa qualidade de dados, os próprios
-                  resultados dela precisam ser confiáveis.
-                </p>
-
-                <h4>Encontrar não significa corrigir</h4>
-                <p>Essa talvez seja a separação mais importante até agora.</p>
-                <p>Se o Valtron encontrar:</p>
-                <pre><code>12.391 CPFs com pontuação</code></pre>
-                <p>ele não deveria simplesmente alterar:</p>
-                <pre><code>030.004.845-90</code></pre>
-                <p>para:</p>
-                <pre><code>03000484590</code></pre>
-                <p>Só porque parece uma correção óbvia.</p>
-                <p>Primeiro:</p>
-                <pre><code>IDENTIFICAR</code></pre>
-                <p>Depois:</p>
-                <pre><code>VALIDAR</code></pre>
-                <p>E somente com intenção explícita:</p>
-                <pre><code>TRANSFORMAR</code></pre>
-                <p>
-                  Essa separação ajuda a evitar que uma ferramenta criada para
-                  analisar dados acabe modificando silenciosamente aquilo que
-                  deveria apenas investigar.
-                </p>
-
-                <h4>O fluxo começou a ficar mais claro</h4>
-                <p>
-                  Com Data Quality, comecei a enxergar o Valtron menos como um
-                  visualizador de arquivos e mais como uma ferramenta de
-                  preparação de dados.
-                </p>
-                <p>O fluxo está ficando assim:</p>
-                <pre><code>ARQUIVO
-   ↓
-IMPORTAR
-   ↓
-EXPLORAR
-   ↓
-PROFILE
-   ↓
-"O que existe?"
-   ↓
-QUALITY
-   ↓
-"O que está errado?"
-   ↓
-TRANSFORM
-   ↓
-"Como quero corrigir?"
-   ↓
-EXPORTAR</code></pre>
-                <p>Cada etapa tem uma responsabilidade.</p>
-                <p>E isso leva naturalmente ao próximo problema.</p>
-                <p>
-                  Se eu descubro que existem 12 mil datas em serial do Excel, 8
-                  mil CPFs sem padding e milhares de nomes com espaços extras,
-                  <strong>como corrigir tudo isso sem editar milhares de células
-                  manualmente?</strong>
-                </p>
-                <p>É aí que entram as transformações em massa.</p>
-                <p>
-                  No próximo post vou falar sobre como estou trabalhando em
-                  <strong>Data Preparation no Valtron, usando preview antes de
-                  modificar milhares de registros e mantendo a possibilidade de
-                  desfazer as transformações</strong>.
-                </p>
-              </article>
-
-              <article id="post-data-preparation" class="post-card post-prose">
-                <div class="post-meta">
-                  <span>Data Preparation</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <a class="post-permalink" href="posts/data-preparation/">Link desta postagem</a>
-                <h3>Data Preparation: corrigindo milhares de registros sem editar célula por célula</h3>
-                <p>
-                  Nos últimos posts falei sobre duas etapas que comecei a
-                  separar no Valtron.
-                </p>
-                <p>
-                  O <strong>Data Profiling</strong> ajuda a entender o que
-                  existe nos dados.
-                </p>
-                <p>
-                  O <strong>Data Quality</strong> permite definir o que é
-                  considerado válido.
-                </p>
-                <p>Depois disso aparece uma pergunta inevitável:</p>
-                <blockquote>Encontrei milhares de problemas. E agora?</blockquote>
-                <p>Editar registro por registro obviamente não é uma boa solução.</p>
-                <p>
-                  Foi daí que comecei a trabalhar em uma nova etapa do Valtron:
-                  <strong>Data Preparation</strong>.
-                </p>
-
-                <h4>Encontrar o problema é apenas metade do trabalho</h4>
-                <p>Imagine importar uma planilha com 600 mil registros.</p>
-                <p>
-                  Depois do profiling e das regras de qualidade, encontro algo
-                  assim:
-                </p>
-                <pre><code>CPF
-
-12.391 valores com formatação
-8.291 valores com menos de 11 dígitos
-2.182 duplicidades
-
-DATA_NASCIMENTO
-
-14.320 valores em serial do Excel
-
-NOME
-
-32.817 valores com espaços extras</code></pre>
-                <p>O Valtron já consegue me ajudar a localizar esses registros.</p>
-                <p>Mas imagine corrigir:</p>
-                <pre><code>32.817 nomes</code></pre>
-                <p>manualmente.</p>
-                <p>Não faz sentido.</p>
-                <p>Se o problema segue um padrão, a correção também pode seguir.</p>
-
-                <h4>Algumas transformações são simples</h4>
-                <p>Considere:</p>
-                <pre><code>"  JOÃO DA SILVA  "</code></pre>
-                <p>Quero transformar em:</p>
-                <pre><code>"JOÃO DA SILVA"</code></pre>
-                <p>É basicamente um <code>TRIM</code>.</p>
-                <p>Outro exemplo:</p>
-                <pre><code>030.004.845-90</code></pre>
-                <p>Quero:</p>
-                <pre><code>03000484590</code></pre>
-                <p>Ou:</p>
-                <pre><code>33639</code></pre>
-                <p>que foi identificado como serial de data do Excel e quero transformar para:</p>
-                <pre><code>05/02/1992</code></pre>
-                <p>Essas operações são determinísticas.</p>
-                <p>O problema não é saber executá-las.</p>
-                <p>
-                  O problema é executá-las com segurança sobre centenas de
-                  milhares de registros.
-                </p>
-
-                <h4>Eu não queria um botão mágico de corrigir</h4>
-                <p>Uma das primeiras decisões dessa funcionalidade foi evitar algo assim:</p>
-                <pre><code>12.391 problemas encontrados
-
-[ Corrigir tudo ]</code></pre>
-                <p>Parece conveniente.</p>
-                <p>
-                  Também é uma ótima maneira de descobrir depois que milhares de
-                  registros foram modificados de uma forma que você não
-                  esperava.
-                </p>
-                <p>Por isso estou usando outro fluxo:</p>
-                <pre><code>CONFIGURAR
-    ↓
-PREVIEW
-    ↓
-VER IMPACTO
-    ↓
-CONFIRMAR
-    ↓
-APLICAR</code></pre>
-                <p>Antes de alterar os dados, o Valtron mostra o que pretende fazer.</p>
-
-                <h4>Preview antes da transformação</h4>
-                <p>Imagine que eu queira remover a pontuação dos CPFs.</p>
-                <p>Antes de executar:</p>
-                <pre><code>NORMALIZAR CPF
-
-Original             Resultado
-────────────────────────────────
-030.004.845-90       03000484590
-123.456.789-00       12345678900
-987.654.321-00       98765432100
-
-604.270 registros analisados
-598.421 serão alterados
-5.849 permanecerão iguais
-
-[ Cancelar ]    [ Aplicar ]</code></pre>
-                <p>Agora existe uma diferença importante.</p>
-                <p>Eu não estou apenas dizendo:</p>
-                <blockquote>remova os pontos.</blockquote>
-                <p>
-                  Estou vendo exemplos reais e a quantidade de dados que será
-                  afetada.
-                </p>
-                <p>Só depois disso a transformação é aplicada.</p>
-
-                <h4>Algumas transformações podem falhar</h4>
-                <p>Considere a conversão de datas.</p>
-                <p>Tenho:</p>
-                <pre><code>33639
-34122
-ABC
-35001</code></pre>
-                <p>Quero converter os seriais do Excel.</p>
-                <p>O preview poderia mostrar:</p>
-                <pre><code>Original        Resultado
-──────────────────────────
-33639           05/02/1992
-34122           data convertida
-ABC             ⚠ não convertido
-35001           data convertida</code></pre>
-                <p>
-                  Nesse caso, também preciso decidir o que acontece com
-                  <code>ABC</code>.
-                </p>
-                <p>Algumas opções seriam:</p>
-                <pre><code>Manter o valor original
-Transformar em vazio
-Cancelar a operação inteira</code></pre>
-                <p>A escolha padrão que estou adotando é a mais conservadora:</p>
-                <p>
-                  <strong>se não consigo converter com segurança, mantenho o
-                  valor original.</strong>
-                </p>
-                <p>
-                  Perder um dado silenciosamente seria pior do que deixar uma
-                  inconsistência para ser investigada.
-                </p>
-
-                <h4>Transformação não é validação</h4>
-                <p>Essa separação continua sendo importante.</p>
-                <p>Considere:</p>
-                <pre><code>3000484590</code></pre>
-                <p>Posso criar uma transformação:</p>
-                <pre><code>preencher com zeros à esquerda
-até atingir 11 caracteres</code></pre>
-                <p>Resultado:</p>
-                <pre><code>03000484590</code></pre>
-                <p>Isso não significa que acabei de criar um CPF válido.</p>
-                <p>Significa apenas que executei uma transformação de texto.</p>
-                <p>Depois disso, a regra:</p>
-                <pre><code>CPF válido</code></pre>
-                <p>é responsável por verificar os dígitos.</p>
-                <p>O fluxo correto é:</p>
-                <pre><code>3000484590
-     ↓
-TRANSFORMAÇÃO
-     ↓
-03000484590
-     ↓
-QUALITY
-     ↓
-CPF válido?</code></pre>
-                <p>
-                  Não quero que uma transformação finja conhecer uma regra de
-                  negócio que não pertence a ela.
-                </p>
-
-                <h4>O DuckDB continua fazendo o trabalho pesado</h4>
-                <p>
-                  Aqui apareceu novamente uma decisão que já usei em outras
-                  partes do Valtron.
-                </p>
-                <p>Para remover espaços de 600 mil nomes, eu poderia fazer:</p>
-                <pre><code>DuckDB
-   ↓
-buscar 600 mil valores
-   ↓
-Rust
-   ↓
-for
-   ↓
-alterar cada registro</code></pre>
-                <p>Mas isso seria transportar uma quantidade enorme de dados sem necessidade.</p>
-                <p>O DuckDB já sabe executar:</p>
-                <pre><code>UPDATE documento
-SET nome = TRIM(nome);</code></pre>
-                <p>Então a arquitetura continua seguindo o mesmo princípio:</p>
-                <blockquote>
-                  levar a operação até os dados, em vez de levar todos os dados
-                  até a operação.
-                </blockquote>
-                <p>O Rust coordena e valida a transformação.</p>
-                <p>O DuckDB executa a operação em massa.</p>
-                <p>A interface recebe apenas informações como:</p>
-                <pre><code>598.421 valores alterados
-347 não puderam ser convertidos
-tempo total: ...</code></pre>
-
-                <h4>Preview e execução precisam falar a mesma língua</h4>
-                <p>Aqui encontrei um detalhe de arquitetura que considero importante.</p>
-                <p>Imagine que o preview utilize uma implementação:</p>
-                <pre><code>valor
-↓
-função A
-↓
-resultado</code></pre>
-                <p>mas, ao clicar em Aplicar, outra implementação seja usada:</p>
-                <pre><code>valor
-↓
-função B
-↓
-resultado</code></pre>
-                <p>
-                  Mesmo que as duas tentem fazer a mesma coisa, eventualmente
-                  alguma diferença vai aparecer.
-                </p>
-                <p>
-                  O usuário verá uma coisa no preview e receberá outra depois de
-                  confirmar.
-                </p>
-                <p>
-                  Por isso o preview e a aplicação precisam partir da
-                  <strong>mesma definição de transformação</strong>.
-                </p>
-                <p>Conceitualmente:</p>
-                <pre><code>Transformação:
-TRIM(nome)
-
-       ├───────────────┐
-       ↓               ↓
-    PREVIEW          APPLY
-       ↓               ↓
-SELECT TRIM()      UPDATE ... TRIM()</code></pre>
-                <p>A representação muda.</p>
-                <p>A regra da transformação não.</p>
-
-                <h4>As primeiras operações são propositalmente simples</h4>
-                <p>Não comecei tentando construir uma linguagem inteira de transformação.</p>
-                <p>As primeiras operações são coisas como:</p>
-                <pre><code>Trim
-Uppercase
-Lowercase
-Localizar e substituir
-Remover caracteres
-Preencher zeros à esquerda
-Converter serial Excel para data</code></pre>
-                <p>
-                  São pequenas operações, mas combinadas conseguem resolver uma
-                  quantidade grande de problemas reais.
-                </p>
-                <p>Por exemplo:</p>
-                <pre><code>CPF
-
-030.004.845-90
-      ↓
-remover pontuação
-      ↓
-03000484590
-      ↓
-preencher zeros se necessário
-      ↓
-validar CPF</code></pre>
-                <p>
-                  A sequência começa a ficar mais interessante que cada operação
-                  isolada.
-                </p>
-
-                <h4>E então apareceu outro problema: desfazer</h4>
-                <p>Imagine executar:</p>
-                <pre><code>TRIM(nome)</code></pre>
-                <p>em 400 mil registros.</p>
-                <p>Depois perceber que não era exatamente aquilo que queria.</p>
-                <p>Em uma edição manual, <code>Ctrl + Z</code> parece óbvio.</p>
-                <p>
-                  Em uma transformação que alterou centenas de milhares de
-                  registros dentro do DuckDB, a história muda.
-                </p>
-                <p>Algumas operações nem sequer possuem uma inversão segura.</p>
-                <p>Considere:</p>
-                <pre><code>joão da Silva
-↓
-UPPERCASE
-↓
-JOÃO DA SILVA</code></pre>
-                <p>
-                  Como descobrir depois exatamente quais letras eram
-                  originalmente maiúsculas?
-                </p>
-                <p>Não dá.</p>
-                <p>Fazer:</p>
-                <pre><code>LOWERCASE</code></pre>
-                <p>não desfaz <code>UPPERCASE</code>.</p>
-                <p>Produz outro dado.</p>
-                <p>Por isso comecei a registrar <strong>deltas das transformações</strong>.</p>
-                <p>
-                  A ideia é guardar informação suficiente sobre aquilo que
-                  realmente mudou:
-                </p>
-                <pre><code>linha
-valor anterior
-valor novo</code></pre>
-                <p>
-                  Assim o Undo não precisa tentar calcular a transformação
-                  inversa.
-                </p>
-                <p>Ele restaura o estado anterior.</p>
-
-                <h4>Delta ou snapshot?</h4>
-                <p>Essa decisão trouxe outra pergunta interessante.</p>
-                <p>Se uma transformação modifica:</p>
-                <pre><code>100 registros</code></pre>
-                <p>guardar os valores anteriores parece barato.</p>
-                <p>Mas e se modificar:</p>
-                <pre><code>600.000 registros?</code></pre>
-                <p>
-                  Talvez guardar centenas de milhares de deltas deixe de ser a
-                  melhor estratégia.
-                </p>
-                <p>
-                  Outra possibilidade é criar algum tipo de
-                  snapshot/versionamento do documento antes da transformação.
-                </p>
-                <p>Então existem duas abordagens:</p>
-                <pre><code>DELTA
-
-guardar somente
-o que mudou</code></pre>
-                <p>versus:</p>
-                <pre><code>SNAPSHOT
-
-guardar uma versão
-do estado anterior</code></pre>
-                <p>Não quero decidir isso apenas pela aparência da arquitetura.</p>
-                <p>Quero medir.</p>
-                <p>
-                  O próximo passo nessa parte é justamente comparar as duas
-                  estratégias com volumes diferentes e observar:
-                </p>
-                <pre><code>tempo para aplicar
-espaço utilizado
-tempo para desfazer
-impacto no DuckDB</code></pre>
-                <p>Com 10 mil registros uma estratégia pode vencer.</p>
-                <p>Com 1 milhão, talvez a resposta seja outra.</p>
-
-                <h4>O histórico começa a formar algo maior</h4>
-                <p>
-                  Quando comecei a registrar as transformações, percebi que o
-                  histórico poderia representar algo assim:
-                </p>
-                <pre><code>alunos.xlsx
-
-1. TRIM(nome)
-2. Remover pontuação(cpf)
-3. Preencher zeros(cpf, 11)
-4. Serial Excel → Data(nascimento)</code></pre>
-                <p>Isso não é apenas histórico.</p>
-                <p>É praticamente uma <strong>receita de preparação de dados</strong>.</p>
-                <p>E essa ideia abre uma possibilidade que considero bem interessante.</p>
-                <p>Imagine que todo mês eu receba um arquivo no mesmo formato.</p>
-                <p>Em agosto:</p>
-                <pre><code>alunos_agosto.xlsx</code></pre>
-                <p>Faço:</p>
-                <pre><code>TRIM nome
-↓
-normalizar CPF
-↓
-converter datas
-↓
-validar
-↓
-exportar</code></pre>
-                <p>No mês seguinte chega:</p>
-                <pre><code>alunos_setembro.xlsx</code></pre>
-                <p>Por que configurar tudo novamente?</p>
-                <p>Eu poderia salvar:</p>
-                <pre><code>Receita:
-Tratamento de alunos</code></pre>
-                <p>e aplicar sobre o próximo arquivo.</p>
-
-                <h4>É aqui que começa a aparecer um pipeline</h4>
-                <p>O fluxo deixa de ser apenas:</p>
-                <pre><code>abrir planilha
-↓
-editar
-↓
-salvar</code></pre>
-                <p>e começa a ficar:</p>
-                <pre><code>ENTRADA
-
-alunos_setembro.xlsx
-
-        ↓
-
-PREPARAÇÃO
-
-Trim
-Normalizar CPF
-Converter datas
-
-        ↓
-
-QUALITY
-
-Validar regras
-
-        ↓
-
-SAÍDA
-
-alunos_setembro_limpo.xlsx</code></pre>
-                <p>
-                  Isso já começa a se aproximar bastante de um pequeno pipeline
-                  de dados.
-                </p>
-                <p>Ainda local.</p>
-                <p>Ainda visual.</p>
-                <p>
-                  E sem exigir que o usuário escreva um script Python diferente
-                  para cada tratamento.
-                </p>
-
-                <h4>Mas não quero começar desenhando bloquinhos</h4>
-                <p>Seria tentador transformar isso imediatamente em uma interface cheia de nós:</p>
-                <pre><code>[XLSX]
-   ↓
-[TRIM]
-   ↓
-[CPF]
-   ↓
-[DATA]
-   ↓
-[QUALITY]
-   ↓
-[EXPORT]</code></pre>
-                <p>Visualmente fica interessante.</p>
-                <p>Mas existe uma pergunta mais importante:</p>
-                <blockquote>O motor por trás desses blocos funciona bem?</blockquote>
-                <p>Por isso estou seguindo outra ordem:</p>
-                <pre><code>Transformação individual
-        ↓
-Preview
-        ↓
-Aplicar
-        ↓
-Histórico
-        ↓
-Undo
-        ↓
-Receita
-        ↓
-Reutilização</code></pre>
-                <p>
-                  Se tudo isso estiver sólido, um editor visual no futuro será
-                  apenas outra maneira de representar um pipeline que já
-                  funciona.
-                </p>
-
-                <h4>O Valtron está mudando de categoria</h4>
-                <p>
-                  Quando comecei o projeto, eu pensava principalmente em:
-                </p>
-                <blockquote>trabalhar melhor com arquivos grandes.</blockquote>
-                <p>Hoje o fluxo está ficando mais próximo de:</p>
-                <pre><code>IMPORTAR
-   ↓
-EXPLORAR
-   ↓
-PROFILE
-   ↓
-QUALITY
-   ↓
-TRANSFORM
-   ↓
-REVALIDAR
-   ↓
-EXPORTAR</code></pre>
-                <p>
-                  Isso aproxima o Valtron de uma ferramenta local de
-                  <strong>Data Preparation e Data Quality</strong>.
-                </p>
-                <p>
-                  E talvez essa seja uma das partes que mais gosto na evolução
-                  do projeto.
-                </p>
-                <p>Não comecei tentando construir uma plataforma de ETL.</p>
-                <p>Comecei tentando abrir e trabalhar melhor com uma planilha grande.</p>
-                <p>Os próximos problemas foram aparecendo naturalmente.</p>
-                <p>
-                  E cada um deles acabou empurrando o projeto um pouco mais para
-                  o mundo de engenharia e preparação de dados.
-                </p>
-                <p>
-                  No próximo post quero falar justamente sobre essa evolução:
-                  <strong>quando uma sequência de transformações deixa de ser
-                  apenas um histórico e começa a virar uma receita reutilizável
-                  de dados.</strong>
-                </p>
-              </article>
-
-              <article id="post-receitas-reutilizaveis-dados" class="post-card post-prose">
-                <div class="post-meta">
-                  <span>Data Preparation</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <a class="post-permalink" href="posts/receitas-reutilizaveis-dados/">Link desta postagem</a>
-                <h3>Quando transformações viram receitas reutilizáveis de dados</h3>
-                <p>
-                  No último post falei sobre as transformações que comecei a
-                  desenvolver no Valtron.
-                </p>
-                <p>A ideia é permitir operações como:</p>
-                <pre><code>TRIM(nome)
-Remover pontuação(cpf)
-Preencher zeros(cpf)
-Converter serial Excel em data</code></pre>
-                <p>sempre mostrando um preview antes de alterar milhares de registros.</p>
-                <p>
-                  Mas, depois de implementar transformações, apareceu uma
-                  questão interessante:
-                </p>
-                <blockquote>Se eu faço o mesmo tratamento todo mês, por que preciso configurar tudo novamente?</blockquote>
-                <p>
-                  Foi daí que surgiu a ideia de
-                  <strong>receitas de transformação</strong>.
-                </p>
-
-                <h4>O problema aparece quando o processo se repete</h4>
-                <p>Imagine que todo mês eu receba um arquivo:</p>
-                <pre><code>alunos_agosto.xlsx
-alunos_setembro.xlsx
-alunos_outubro.xlsx</code></pre>
-                <p>A estrutura é praticamente a mesma.</p>
-                <p>E os problemas também.</p>
-                <p>Todo mês preciso:</p>
-                <pre><code>1. Remover espaços de NOME
-2. Remover pontuação de CPF
-3. Preencher CPF com 11 caracteres
-4. Converter DATA_NASCIMENTO
-5. Padronizar EMAIL</code></pre>
-                <p>Fazer isso uma vez é preparação de dados.</p>
-                <p>Fazer exatamente a mesma coisa todo mês começa a parecer automação.</p>
-
-                <h4>O histórico já contém parte da resposta</h4>
-                <p>
-                  Quando uma transformação é aplicada, o Valtron precisa saber o
-                  que aconteceu.
-                </p>
-                <p>Algo como:</p>
-                <pre><code>TRANSFORMAÇÕES
-
-1. Trim
-   coluna: nome
-
-2. Remover caracteres
-   coluna: cpf
-   caracteres: "." e "-"
-
-3. Preencher à esquerda
-   coluna: cpf
-   tamanho: 11
-   caractere: "0"
-
-4. Serial Excel → Data
-   coluna: data_nascimento
-   formato: DD/MM/YYYY</code></pre>
-                <p>Percebi que essa sequência não representa apenas um histórico.</p>
-                <p>
-                  Ela também descreve
-                  <strong>como preparar aquele tipo de arquivo</strong>.
-                </p>
-                <p>Então posso transformar isso em algo reutilizável.</p>
-
-                <h4>Salvando como receita</h4>
-                <p>Depois de preparar <code>alunos_agosto.xlsx</code>, poderia existir:</p>
-                <pre><code>Salvar como receita
-
-Nome:
-Tratamento de alunos</code></pre>
-                <p>A receita guardaria:</p>
-                <pre><code>Tratamento de alunos
-
-1. Trim → nome
-2. Remover "." e "-" → cpf
-3. Pad left 11 → cpf
-4. Serial Excel → DD/MM/YYYY → data_nascimento
-5. Lowercase → email</code></pre>
-                <p>No mês seguinte:</p>
-                <pre><code>alunos_setembro.xlsx
-        ↓
-Aplicar receita
-        ↓
-Tratamento de alunos</code></pre>
-                <p>Em vez de configurar cinco transformações novamente.</p>
-
-                <h4>A ordem importa</h4>
-                <p>Uma receita não é simplesmente uma lista de operações independentes.</p>
-                <p>Considere um CPF:</p>
-                <pre><code>30.004.845-90</code></pre>
-                <p>Primeiro:</p>
-                <pre><code>remover pontuação
-
-30.004.845-90
-      ↓
-3000484590</code></pre>
-                <p>Depois:</p>
-                <pre><code>preencher zeros até 11 caracteres
-
-3000484590
-      ↓
-03000484590</code></pre>
-                <p>Se eu inverter algumas operações, o resultado pode ser diferente.</p>
-                <p>Por isso uma receita precisa ser executada sequencialmente:</p>
-                <pre><code>entrada
-   ↓
-step 1
-   ↓
-resultado 1
-   ↓
-step 2
-   ↓
-resultado 2
-   ↓
-step 3
-   ↓
-resultado final</code></pre>
-                <p>Cada etapa trabalha sobre o resultado da anterior.</p>
-                <p>Isso já começa a ter características de um pequeno pipeline.</p>
-
-                <h4>Mas outro arquivo pode não ter as mesmas colunas</h4>
-                <p>Esse é um problema que parece simples até começar a automatizar.</p>
-                <p>Minha receita espera:</p>
-                <pre><code>nome
-cpf
-data_nascimento
-email</code></pre>
-                <p>Mas o próximo arquivo pode possuir:</p>
-                <pre><code>nome_aluno
-cpf
-nascimento
-email</code></pre>
-                <p>
-                  Eu não quero que o Valtron simplesmente ignore as etapas
-                  incompatíveis.
-                </p>
-                <p>Antes de executar, ele precisa verificar:</p>
-                <pre><code>COMPATIBILIDADE
-
-✓ cpf
-✓ email
-
-⚠ nome não encontrado
-⚠ data_nascimento não encontrada</code></pre>
-                <p>E parar.</p>
-                <p>
-                  Uma automação silenciosamente incompleta é pior do que uma
-                  automação que falha de maneira clara.
-                </p>
-
-                <h4>No futuro, o usuário pode fazer o mapeamento</h4>
-                <p>Uma evolução possível seria permitir:</p>
-                <pre><code>A receita espera        Documento possui
-
-nome             →      nome_aluno
-cpf              →      cpf
-data_nascimento  →      nascimento
-email            →      email</code></pre>
-                <p>Depois disso:</p>
-                <pre><code>[ Aplicar receita ]</code></pre>
-                <p>
-                  Isso permitiria reutilizar uma preparação mesmo quando os
-                  arquivos possuem pequenas diferenças de nomenclatura.
-                </p>
-                <p>Mas prefiro que esse mapeamento seja explícito.</p>
-                <p>Não quero que o Valtron simplesmente conclua:</p>
-                <blockquote><code>nascimento</code> provavelmente significa <code>data_nascimento</code>.</blockquote>
-                <p>Pode parecer óbvio para nós.</p>
-                <p>Nem sempre será.</p>
-
-                <h4>Receita também precisa de preview</h4>
-                <p>
-                  Automatizar não deveria remover a segurança que existe nas
-                  transformações individuais.
-                </p>
-                <p>Antes de executar:</p>
-                <pre><code>Tratamento de alunos
-
-5 transformações
-
-604.270 registros</code></pre>
-                <p>o Valtron pode calcular o impacto:</p>
-                <pre><code>PREVIEW
-
-Nome
-8.291 valores serão alterados
-
-CPF
-598.421 valores serão alterados
-
-Data de nascimento
-12.391 valores serão convertidos
-
-Email
-47.821 valores serão alterados</code></pre>
-                <p>E mostrar alguns exemplos:</p>
-                <pre><code>ANTES                 DEPOIS
-
-" JOÃO SILVA "        "JOÃO SILVA"
-
-030.004.845-90        03000484590
-
-33639                 05/02/1992
-
-JOAO@EMAIL.COM        joao@email.com</code></pre>
-                <p>Somente depois:</p>
-                <pre><code>[ Executar receita ]</code></pre>
-
-                <h4>E se a terceira etapa falhar?</h4>
-                <p>Imagine:</p>
-                <pre><code>1. Trim nome              ✓
-2. Normalizar CPF         ✓
-3. Converter datas        ✕
-4. Normalizar email</code></pre>
-                <p>O que fazer?</p>
-                <p>Uma possibilidade seria deixar as duas primeiras alterações aplicadas.</p>
-                <p>Mas agora o documento está parcialmente processado.</p>
-                <p>Na primeira versão, prefiro um comportamento mais previsível:</p>
-                <pre><code>BEGIN
-
-step 1
-step 2
-step 3 → erro
-
-ROLLBACK</code></pre>
-                <p>Resultado:</p>
-                <pre><code>Nenhuma transformação da receita foi aplicada.</code></pre>
-                <p>Ou tudo funciona, ou o documento volta ao estado anterior.</p>
-
-                <h4>Isso começa a se aproximar de ETL</h4>
-                <p>Quando comecei o Valtron, ETL não era exatamente o objetivo.</p>
-                <p>Mas observe o fluxo que começa a surgir:</p>
-                <pre><code>EXTRACT
-
-alunos_setembro.xlsx
-          ↓
-
-TRANSFORM
-
-Trim
-Normalizar CPF
-Converter datas
-Normalizar email
-          ↓
-
-QUALITY
-
-CPF válido
-Data válida
-Email válido
-          ↓
-
-LOAD
-
-DuckDB
-CSV
-XLSX</code></pre>
-                <p>
-                  Temos claramente elementos de um fluxo de preparação e
-                  movimentação de dados.
-                </p>
-                <p>
-                  Só que ainda existe uma diferença importante para o que quero
-                  construir.
-                </p>
-                <p>Não estou tentando transformar o Valtron em um Airflow desktop.</p>
-                <p>
-                  O foco continua sendo uma experiência interativa de preparação
-                  e qualidade de dados.
-                </p>
-
-                <h4>Por que não começar com um editor visual?</h4>
-                <p>Quando pensamos em pipeline, rapidamente aparece algo assim:</p>
-                <pre><code>┌──────────┐
-│ XLSX     │
-└────┬─────┘
-     ↓
-┌──────────┐
-│ Trim     │
-└────┬─────┘
-     ↓
-┌──────────┐
-│ CPF      │
-└────┬─────┘
-     ↓
-┌──────────┐
-│ Datas    │
-└────┬─────┘
-     ↓
-┌──────────┐
-│ Quality  │
-└────┬─────┘
-     ↓
-┌──────────┐
-│ Exportar │
-└──────────┘</code></pre>
-                <p>É uma interface interessante.</p>
-                <p>Mas comecei a pensar que construir isso agora seria inverter as prioridades.</p>
-                <p>Antes dos blocos, eu preciso garantir que:</p>
-                <pre><code>transformações funcionam
-preview é confiável
-rollback funciona
-undo funciona
-receitas são reproduzíveis
-erros são tratados
-performance continua boa</code></pre>
-                <p>
-                  Depois disso, desenhar os bloquinhos é principalmente criar
-                  outra representação para um motor que já existe.
-                </p>
-
-                <h4>O visual não deveria ser a arquitetura</h4>
-                <p>Essa foi uma conclusão interessante dessa etapa.</p>
-                <p>É fácil começar um sistema de pipelines pelo diagrama.</p>
-                <p>Mas o diagrama é apenas uma representação.</p>
-                <p>O que realmente importa é algo mais próximo disso:</p>
-                <pre><code>Recipe
-   │
-   ├── Step 1
-   │
-   ├── Step 2
-   │
-   ├── Step 3
-   │
-   └── Step 4</code></pre>
-                <p>Cada step possui:</p>
-                <pre><code>tipo
-coluna
-configuração
-ordem</code></pre>
-                <p>Por exemplo:</p>
-                <pre><code>{
-  "type": "pad_left",
-  "column": "cpf",
-  "configuration": {
-    "length": 11,
-    "character": "0"
-  }
-}</code></pre>
-                <p>A interface pode mudar no futuro.</p>
-                <p>A receita continua sendo a mesma.</p>
-
-                <h4>O ganho real não é executar cinco operações de uma vez</h4>
-                <p>
-                  Para mim, o ponto mais interessante das receitas não é
-                  economizar cinco cliques.
-                </p>
-                <p>
-                  É transformar conhecimento sobre tratamento de dados em algo
-                  reproduzível.
-                </p>
-                <p>Antes:</p>
-                <pre><code>"Quando chegar a planilha,
-lembre de remover os pontos do CPF,
-corrigir os zeros,
-converter a data..."</code></pre>
-                <p>Depois:</p>
-                <pre><code>Receita:
-Tratamento de alunos</code></pre>
-                <p>O procedimento deixa de existir apenas na cabeça de alguém.</p>
-                <p>Ele passa a existir como uma sequência executável.</p>
-
-                <h4>E isso muda bastante o uso do Valtron</h4>
-                <p>Sem receitas:</p>
-                <pre><code>arquivo
-   ↓
-investigar
-   ↓
-corrigir
-   ↓
-exportar</code></pre>
-                <p>Com receitas:</p>
-                <pre><code>arquivo novo
-   ↓
-aplicar preparação conhecida
-   ↓
-validar resultado
-   ↓
-investigar exceções
-   ↓
-exportar</code></pre>
-                <p>
-                  O trabalho humano começa a sair da parte repetitiva e ir para
-                  aquilo que realmente precisa de análise.
-                </p>
-                <p>
-                  Esse é o ponto em que o Valtron começa a deixar de ser apenas
-                  uma ferramenta para trabalhar com um arquivo e passa a guardar
-                  <strong>como aquele tipo de dado deve ser preparado</strong>.
-                </p>
-                <p>E isso abre outra possibilidade interessante.</p>
-                <p>
-                  Se consigo importar, transformar, validar e exportar seguindo
-                  uma receita, o próximo passo pode ser deixar de pensar apenas
-                  em arquivos.
-                </p>
-                <p>Por que a entrada precisa ser sempre XLSX ou CSV?</p>
-                <p>Por que a saída precisa ser sempre outro arquivo?</p>
-                <p>
-                  No próximo post quero explorar essa ideia:
-                  <strong>como conectores com PostgreSQL, Parquet e outras
-                  fontes poderiam transformar o Valtron de um Data Preparation
-                  Studio baseado em arquivos em uma ferramenta local para
-                  movimentação e preparação de dados entre diferentes
-                  fontes.</strong>
-                </p>
-              </article>
-            </div>
-
-            <div class="post-list post-next post-index">
-              <div class="blog-single-tools">
-                <a class="blog-all-link" href="#blog">Ver todas as postagens</a>
-              </div>
-
-              <article class="post-card">
-                <div class="post-meta">
-                  <span>Post 01</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <h3><a href="posts/origem-valtron/">Por que comecei a desenvolver o Valtron</a></h3>
-                <p>Origem do projeto, DuckDB local e a ideia de um data studio desktop.</p>
-              </article>
-
-              <article class="post-card">
-                <div class="post-meta">
-                  <span>Post 02</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <h3><a href="posts/importacao-xlsx/">Como carreguei mais de 600 mil registros em poucos segundos</a></h3>
-                <p>Importação direta com DuckDB, métricas e a decisão de remover trabalho duplicado.</p>
-              </article>
-
-              <article class="post-card">
-                <div class="post-meta">
-                  <span>Post 03</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <h3><a href="posts/grid-virtualizada/">Importar 600 mil linhas rápido não adianta se a interface travar</a></h3>
-                <p>Virtualização, prefetch, cache limitado e consultas por janela.</p>
-              </article>
-
-              <article class="post-card">
-                <div class="post-meta">
-                  <span>Post 04</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <h3><a href="posts/duckdb-desktop/">DuckDB dentro de uma aplicação desktop</a></h3>
-                <p>Banco embutido, local-first, SQL, profiling, quality e transformações.</p>
-              </article>
-
-              <article class="post-card">
-                <div class="post-meta">
-                  <span>Post 05</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <h3><a href="posts/importar-como-texto/">Por que o Valtron importa os dados como texto antes de tentar entendê-los</a></h3>
-                <p>Preservação do dado original, profiling, qualidade e transformações com intenção explícita.</p>
-              </article>
-
-              <article class="post-card">
-                <div class="post-meta">
-                  <span>Post 06</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <h3><a href="posts/data-profiling-600-mil/">Data Profiling: entendendo 600 mil registros sem escrever várias queries</a></h3>
-                <p>Estatísticas agregadas no DuckDB, tipo provável, distribuição e investigação por clique.</p>
-              </article>
-
-              <article class="post-card">
-                <div class="post-meta">
-                  <span>Post 07</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <h3><a href="posts/data-quality/">Data Quality: entender os dados não significa que eles estão corretos</a></h3>
-                <p>Regras explícitas, violações, score de qualidade e investigação dos registros problemáticos.</p>
-              </article>
-
-              <article class="post-card">
-                <div class="post-meta">
-                  <span>Post 08</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <h3><a href="posts/data-preparation/">Data Preparation: corrigindo milhares de registros sem editar célula por célula</a></h3>
-                <p>Preview, aplicação em massa no DuckDB, undo por deltas e receitas reutilizáveis.</p>
-              </article>
-
-              <article class="post-card">
-                <div class="post-meta">
-                  <span>Post 09</span>
-                  <span>15 ago 2026</span>
-                </div>
-                <h3><a href="posts/receitas-reutilizaveis-dados/">Quando transformações viram receitas reutilizáveis de dados</a></h3>
-                <p>Receitas de transformação, compatibilidade de colunas, preview, rollback e pipelines reutilizáveis.</p>
-              </article>
-            </div>
+            <figure class="capture">
+              <button class="image-button" type="button" data-slide="0" aria-label="Abrir transformações ampliadas">
+                <img
+                  src="images/valtron-interface-compacta.png"
+                  alt="Interface do Valtron com dados preparados para transformação"
+                  width="2864"
+                  height="1800"
+                  loading="lazy"
+                />
+              </button>
+              <figcaption class="caption"><strong>Transformações.</strong> Compare valores antes e depois antes de aplicar modificações em massa.</figcaption>
+            </figure>
           </div>
         </div>
       </section>
 
       <section>
         <div class="shell">
-          <div class="callout">
-            <p><strong>Observação sobre GitHub Pages:</strong></p>
+          <div class="section-heading">
+            <p class="eyebrow">Tecnologia</p>
+            <h2>Processamento local, sem servidor de banco</h2>
             <p>
-              Esta página é estática e serve para apresentar o projeto. O app
-              completo depende do Tauri, Rust e DuckDB local, por isso não roda
-              diretamente dentro do navegador no GitHub Pages.
+              O Valtron combina tecnologias desktop e um motor analítico
+              embutido para executar o processamento diretamente no computador.
             </p>
+          </div>
+          <div class="stack">
+            <article class="stack-item">
+              <h3>Tauri</h3>
+              <p>Aplicação desktop.</p>
+            </article>
+            <article class="stack-item">
+              <h3>Rust</h3>
+              <p>Backend e operações locais.</p>
+            </article>
+            <article class="stack-item">
+              <h3>DuckDB</h3>
+              <p>Processamento analítico local usando DuckDB.</p>
+            </article>
+          </div>
+          <p class="note"><a href="PROJETO.md">Conhecer a arquitetura</a></p>
+        </div>
+      </section>
+
+      <section id="blog" class="band">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Blog</p>
+            <h2>Evolução, experimentos e decisões técnicas do Valtron</h2>
+          </div>
+          <div class="blog-grid">
+            <article class="post-card">
+              <div class="post-meta">
+                <span>Post 08</span>
+                <span>15 ago 2026</span>
+              </div>
+              <h3><a href="posts/data-preparation/">Data Preparation: corrigindo milhares de registros sem editar célula por célula</a></h3>
+              <p>Preview, transformações em massa e preparação de dados no Valtron.</p>
+            </article>
+            <article class="post-card">
+              <div class="post-meta">
+                <span>Post 07</span>
+                <span>15 ago 2026</span>
+              </div>
+              <h3><a href="posts/data-quality/">Data Quality: entender os dados não significa que eles estão corretos</a></h3>
+              <p>Regras, violações e investigação dos registros problemáticos.</p>
+            </article>
+            <article class="post-card">
+              <div class="post-meta">
+                <span>Post 02</span>
+                <span>15 ago 2026</span>
+              </div>
+              <h3><a href="posts/importacao-xlsx/">Como carreguei mais de 600 mil registros em poucos segundos</a></h3>
+              <p>Importação XLSX, benchmarks e DuckDB.</p>
+            </article>
+          </div>
+          <p class="note"><a href="blog/">Ver todos os posts</a></p>
+        </div>
+      </section>
+
+      <section>
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">FAQ</p>
+            <h2>Perguntas frequentes</h2>
+          </div>
+          <div class="faq-grid">
+            <article class="faq-item">
+              <h3>Meus dados são enviados para a nuvem?</h3>
+              <p>O fluxo principal de importação, consulta e análise é executado localmente no computador.</p>
+            </article>
+            <article class="faq-item">
+              <h3>Preciso instalar PostgreSQL?</h3>
+              <p>Não. O Valtron utiliza DuckDB embutido.</p>
+            </article>
+            <article class="faq-item">
+              <h3>Quais arquivos são suportados?</h3>
+              <p>XLSX, XLSM e CSV na versão atual.</p>
+            </article>
+            <article class="faq-item">
+              <h3>Posso usar SQL?</h3>
+              <p>Sim. Existe um console SQL somente leitura.</p>
+            </article>
+            <article class="faq-item">
+              <h3>Funciona com arquivos grandes?</h3>
+              <p>O Valtron foi desenvolvido pensando em grandes volumes e utiliza processamento analítico e grid virtualizada. O desempenho depende do hardware e das características do arquivo.</p>
+            </article>
+            <article class="faq-item">
+              <h3>O Valtron funciona no navegador?</h3>
+              <p>Não. Ele é uma aplicação desktop porque o processamento e armazenamento são locais.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta">
+        <div class="shell final-panel">
+          <div>
+            <h2>Seus dados são grandes. Trabalhar com eles não precisa ser complicado.</h2>
+            <p>Importe o arquivo, investigue os dados, encontre problemas e prepare o resultado localmente com o Valtron.</p>
+          </div>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/Zigtecnologia-web/valtron/releases/latest">Baixar Valtron</a>
+            <a class="button" href="https://github.com/Zigtecnologia-web/valtron">Ver no GitHub</a>
           </div>
         </div>
       </section>
@@ -4117,8 +1134,26 @@ exportar</code></pre>
 
     <footer class="footer">
       <div class="shell">
-        Valtron é mantido no repositório
-        <a href="https://github.com/Zigtecnologia-web/valtron">Zigtecnologia-web/valtron</a>.
+        <div class="footer-grid">
+          <div>
+            <strong>VALTRON</strong>
+            <p>Data Preparation e Data Quality local.</p>
+          </div>
+          <div>
+            <strong>Produto</strong>
+            <a href="#recursos">Recursos</a>
+            <a href="#como-funciona">Como funciona</a>
+            <a href="#interface">Interface</a>
+            <a href="blog/">Blog</a>
+          </div>
+          <div>
+            <strong>Projeto</strong>
+            <a href="https://github.com/Zigtecnologia-web/valtron">GitHub</a>
+            <a href="PROJETO.md">Documentação</a>
+            <a href="https://github.com/Zigtecnologia-web/valtron/releases">Releases</a>
+          </div>
+        </div>
+        <p class="copyright">© 2026 Valtron</p>
       </div>
     </footer>
 
@@ -4144,7 +1179,7 @@ exportar</code></pre>
         {
           src: "images/valtron-interface-compacta.png",
           alt: "Interface principal do Valtron com grid de dados importados",
-          title: "Visualização principal",
+          title: "Grid, dados e análise",
         },
         {
           src: "images/valtron-interface-workspace.png",
@@ -4161,15 +1196,6 @@ exportar</code></pre>
       const prevButton = document.querySelector("#modal-prev");
       const nextButton = document.querySelector("#modal-next");
       let currentSlide = 0;
-
-      function syncSinglePostMode() {
-        const id = window.location.hash.slice(1);
-        const target = id ? document.getElementById(id) : null;
-        document.body.classList.toggle(
-          "single-post-mode",
-          Boolean(target && target.classList.contains("post-prose")),
-        );
-      }
 
       function showSlide(index) {
         currentSlide = (index + slides.length) % slides.length;
@@ -4201,8 +1227,6 @@ exportar</code></pre>
       closeButton.addEventListener("click", closeModal);
       prevButton.addEventListener("click", () => showSlide(currentSlide - 1));
       nextButton.addEventListener("click", () => showSlide(currentSlide + 1));
-      window.addEventListener("hashchange", syncSinglePostMode);
-      syncSinglePostMode();
 
       modal.addEventListener("click", (event) => {
         if (event.target === modal) {

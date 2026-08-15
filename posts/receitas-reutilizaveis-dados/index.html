@@ -676,6 +676,31 @@
         box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28);
       }
 
+
+      .article-nav {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+        margin-top: 8px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+      }
+
+      .article-nav a,
+      .article-nav span {
+        color: var(--accent-strong);
+        font-weight: 850;
+      }
+
+      .article-nav span {
+        color: var(--muted);
+      }
+
+      .article-nav .next-link {
+        text-align: right;
+      }
+
       @media (max-width: 920px) {
         body.post-page .blog-layout {
           grid-template-columns: 1fr;
@@ -684,6 +709,15 @@
         body.post-page .post-index {
           order: -1;
         }
+
+        .article-nav {
+          grid-template-columns: 1fr;
+        }
+
+        .article-nav .next-link {
+          text-align: left;
+        }
+
       }
     </style>
   </head>
@@ -696,10 +730,11 @@
         </a>
         <nav class="nav" aria-label="Navegação principal">
           <a href="../../#recursos">Recursos</a>
-          <a href="../../#por-que-usar">Por que usar</a>
-          <a href="../../#blog">Blog</a>
+          <a href="../../#como-funciona">Como funciona</a>
+          <a href="../../#para-quem">Para quem</a>
           <a href="../../#interface">Interface</a>
-          <a href="https://github.com/Zigtecnologia-web/valtron#readme">README</a>
+          <a href="../../blog/">Blog</a>
+          <a href="https://github.com/Zigtecnologia-web/valtron">GitHub</a>
         </nav>
       </div>
     </header>
@@ -1130,12 +1165,18 @@ exportar</code></pre>
                   movimentação e preparação de dados entre diferentes
                   fontes.</strong>
                 </p>
+
+                <nav class="article-nav" aria-label="Navegação entre artigos">
+                  <a href="../data-preparation/">← Artigo anterior</a>
+                  <a href="../../blog/">Voltar ao blog</a>
+                  <span class="next-link">Próximo artigo →</span>
+                </nav>
               </article>
             </div>
 
             <div class="post-list post-next post-index">
               <div class="blog-single-tools">
-                <a class="blog-all-link" href="../../#blog">Ver todas as postagens</a>
+                <a class="blog-all-link" href="../../blog/">Ver todos os posts</a>
               </div>
 
               <article class="post-card">
