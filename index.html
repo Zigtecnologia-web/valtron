@@ -3592,6 +3592,423 @@ EXPORTAR</code></pre>
                   de dados.</strong>
                 </p>
               </article>
+
+              <article id="post-receitas-reutilizaveis-dados" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Data Preparation</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <a class="post-permalink" href="posts/receitas-reutilizaveis-dados/">Link desta postagem</a>
+                <h3>Quando transformações viram receitas reutilizáveis de dados</h3>
+                <p>
+                  No último post falei sobre as transformações que comecei a
+                  desenvolver no Valtron.
+                </p>
+                <p>A ideia é permitir operações como:</p>
+                <pre><code>TRIM(nome)
+Remover pontuação(cpf)
+Preencher zeros(cpf)
+Converter serial Excel em data</code></pre>
+                <p>sempre mostrando um preview antes de alterar milhares de registros.</p>
+                <p>
+                  Mas, depois de implementar transformações, apareceu uma
+                  questão interessante:
+                </p>
+                <blockquote>Se eu faço o mesmo tratamento todo mês, por que preciso configurar tudo novamente?</blockquote>
+                <p>
+                  Foi daí que surgiu a ideia de
+                  <strong>receitas de transformação</strong>.
+                </p>
+
+                <h4>O problema aparece quando o processo se repete</h4>
+                <p>Imagine que todo mês eu receba um arquivo:</p>
+                <pre><code>alunos_agosto.xlsx
+alunos_setembro.xlsx
+alunos_outubro.xlsx</code></pre>
+                <p>A estrutura é praticamente a mesma.</p>
+                <p>E os problemas também.</p>
+                <p>Todo mês preciso:</p>
+                <pre><code>1. Remover espaços de NOME
+2. Remover pontuação de CPF
+3. Preencher CPF com 11 caracteres
+4. Converter DATA_NASCIMENTO
+5. Padronizar EMAIL</code></pre>
+                <p>Fazer isso uma vez é preparação de dados.</p>
+                <p>Fazer exatamente a mesma coisa todo mês começa a parecer automação.</p>
+
+                <h4>O histórico já contém parte da resposta</h4>
+                <p>
+                  Quando uma transformação é aplicada, o Valtron precisa saber o
+                  que aconteceu.
+                </p>
+                <p>Algo como:</p>
+                <pre><code>TRANSFORMAÇÕES
+
+1. Trim
+   coluna: nome
+
+2. Remover caracteres
+   coluna: cpf
+   caracteres: "." e "-"
+
+3. Preencher à esquerda
+   coluna: cpf
+   tamanho: 11
+   caractere: "0"
+
+4. Serial Excel → Data
+   coluna: data_nascimento
+   formato: DD/MM/YYYY</code></pre>
+                <p>Percebi que essa sequência não representa apenas um histórico.</p>
+                <p>
+                  Ela também descreve
+                  <strong>como preparar aquele tipo de arquivo</strong>.
+                </p>
+                <p>Então posso transformar isso em algo reutilizável.</p>
+
+                <h4>Salvando como receita</h4>
+                <p>Depois de preparar <code>alunos_agosto.xlsx</code>, poderia existir:</p>
+                <pre><code>Salvar como receita
+
+Nome:
+Tratamento de alunos</code></pre>
+                <p>A receita guardaria:</p>
+                <pre><code>Tratamento de alunos
+
+1. Trim → nome
+2. Remover "." e "-" → cpf
+3. Pad left 11 → cpf
+4. Serial Excel → DD/MM/YYYY → data_nascimento
+5. Lowercase → email</code></pre>
+                <p>No mês seguinte:</p>
+                <pre><code>alunos_setembro.xlsx
+        ↓
+Aplicar receita
+        ↓
+Tratamento de alunos</code></pre>
+                <p>Em vez de configurar cinco transformações novamente.</p>
+
+                <h4>A ordem importa</h4>
+                <p>Uma receita não é simplesmente uma lista de operações independentes.</p>
+                <p>Considere um CPF:</p>
+                <pre><code>30.004.845-90</code></pre>
+                <p>Primeiro:</p>
+                <pre><code>remover pontuação
+
+30.004.845-90
+      ↓
+3000484590</code></pre>
+                <p>Depois:</p>
+                <pre><code>preencher zeros até 11 caracteres
+
+3000484590
+      ↓
+03000484590</code></pre>
+                <p>Se eu inverter algumas operações, o resultado pode ser diferente.</p>
+                <p>Por isso uma receita precisa ser executada sequencialmente:</p>
+                <pre><code>entrada
+   ↓
+step 1
+   ↓
+resultado 1
+   ↓
+step 2
+   ↓
+resultado 2
+   ↓
+step 3
+   ↓
+resultado final</code></pre>
+                <p>Cada etapa trabalha sobre o resultado da anterior.</p>
+                <p>Isso já começa a ter características de um pequeno pipeline.</p>
+
+                <h4>Mas outro arquivo pode não ter as mesmas colunas</h4>
+                <p>Esse é um problema que parece simples até começar a automatizar.</p>
+                <p>Minha receita espera:</p>
+                <pre><code>nome
+cpf
+data_nascimento
+email</code></pre>
+                <p>Mas o próximo arquivo pode possuir:</p>
+                <pre><code>nome_aluno
+cpf
+nascimento
+email</code></pre>
+                <p>
+                  Eu não quero que o Valtron simplesmente ignore as etapas
+                  incompatíveis.
+                </p>
+                <p>Antes de executar, ele precisa verificar:</p>
+                <pre><code>COMPATIBILIDADE
+
+✓ cpf
+✓ email
+
+⚠ nome não encontrado
+⚠ data_nascimento não encontrada</code></pre>
+                <p>E parar.</p>
+                <p>
+                  Uma automação silenciosamente incompleta é pior do que uma
+                  automação que falha de maneira clara.
+                </p>
+
+                <h4>No futuro, o usuário pode fazer o mapeamento</h4>
+                <p>Uma evolução possível seria permitir:</p>
+                <pre><code>A receita espera        Documento possui
+
+nome             →      nome_aluno
+cpf              →      cpf
+data_nascimento  →      nascimento
+email            →      email</code></pre>
+                <p>Depois disso:</p>
+                <pre><code>[ Aplicar receita ]</code></pre>
+                <p>
+                  Isso permitiria reutilizar uma preparação mesmo quando os
+                  arquivos possuem pequenas diferenças de nomenclatura.
+                </p>
+                <p>Mas prefiro que esse mapeamento seja explícito.</p>
+                <p>Não quero que o Valtron simplesmente conclua:</p>
+                <blockquote><code>nascimento</code> provavelmente significa <code>data_nascimento</code>.</blockquote>
+                <p>Pode parecer óbvio para nós.</p>
+                <p>Nem sempre será.</p>
+
+                <h4>Receita também precisa de preview</h4>
+                <p>
+                  Automatizar não deveria remover a segurança que existe nas
+                  transformações individuais.
+                </p>
+                <p>Antes de executar:</p>
+                <pre><code>Tratamento de alunos
+
+5 transformações
+
+604.270 registros</code></pre>
+                <p>o Valtron pode calcular o impacto:</p>
+                <pre><code>PREVIEW
+
+Nome
+8.291 valores serão alterados
+
+CPF
+598.421 valores serão alterados
+
+Data de nascimento
+12.391 valores serão convertidos
+
+Email
+47.821 valores serão alterados</code></pre>
+                <p>E mostrar alguns exemplos:</p>
+                <pre><code>ANTES                 DEPOIS
+
+" JOÃO SILVA "        "JOÃO SILVA"
+
+030.004.845-90        03000484590
+
+33639                 05/02/1992
+
+JOAO@EMAIL.COM        joao@email.com</code></pre>
+                <p>Somente depois:</p>
+                <pre><code>[ Executar receita ]</code></pre>
+
+                <h4>E se a terceira etapa falhar?</h4>
+                <p>Imagine:</p>
+                <pre><code>1. Trim nome              ✓
+2. Normalizar CPF         ✓
+3. Converter datas        ✕
+4. Normalizar email</code></pre>
+                <p>O que fazer?</p>
+                <p>Uma possibilidade seria deixar as duas primeiras alterações aplicadas.</p>
+                <p>Mas agora o documento está parcialmente processado.</p>
+                <p>Na primeira versão, prefiro um comportamento mais previsível:</p>
+                <pre><code>BEGIN
+
+step 1
+step 2
+step 3 → erro
+
+ROLLBACK</code></pre>
+                <p>Resultado:</p>
+                <pre><code>Nenhuma transformação da receita foi aplicada.</code></pre>
+                <p>Ou tudo funciona, ou o documento volta ao estado anterior.</p>
+
+                <h4>Isso começa a se aproximar de ETL</h4>
+                <p>Quando comecei o Valtron, ETL não era exatamente o objetivo.</p>
+                <p>Mas observe o fluxo que começa a surgir:</p>
+                <pre><code>EXTRACT
+
+alunos_setembro.xlsx
+          ↓
+
+TRANSFORM
+
+Trim
+Normalizar CPF
+Converter datas
+Normalizar email
+          ↓
+
+QUALITY
+
+CPF válido
+Data válida
+Email válido
+          ↓
+
+LOAD
+
+DuckDB
+CSV
+XLSX</code></pre>
+                <p>
+                  Temos claramente elementos de um fluxo de preparação e
+                  movimentação de dados.
+                </p>
+                <p>
+                  Só que ainda existe uma diferença importante para o que quero
+                  construir.
+                </p>
+                <p>Não estou tentando transformar o Valtron em um Airflow desktop.</p>
+                <p>
+                  O foco continua sendo uma experiência interativa de preparação
+                  e qualidade de dados.
+                </p>
+
+                <h4>Por que não começar com um editor visual?</h4>
+                <p>Quando pensamos em pipeline, rapidamente aparece algo assim:</p>
+                <pre><code>┌──────────┐
+│ XLSX     │
+└────┬─────┘
+     ↓
+┌──────────┐
+│ Trim     │
+└────┬─────┘
+     ↓
+┌──────────┐
+│ CPF      │
+└────┬─────┘
+     ↓
+┌──────────┐
+│ Datas    │
+└────┬─────┘
+     ↓
+┌──────────┐
+│ Quality  │
+└────┬─────┘
+     ↓
+┌──────────┐
+│ Exportar │
+└──────────┘</code></pre>
+                <p>É uma interface interessante.</p>
+                <p>Mas comecei a pensar que construir isso agora seria inverter as prioridades.</p>
+                <p>Antes dos blocos, eu preciso garantir que:</p>
+                <pre><code>transformações funcionam
+preview é confiável
+rollback funciona
+undo funciona
+receitas são reproduzíveis
+erros são tratados
+performance continua boa</code></pre>
+                <p>
+                  Depois disso, desenhar os bloquinhos é principalmente criar
+                  outra representação para um motor que já existe.
+                </p>
+
+                <h4>O visual não deveria ser a arquitetura</h4>
+                <p>Essa foi uma conclusão interessante dessa etapa.</p>
+                <p>É fácil começar um sistema de pipelines pelo diagrama.</p>
+                <p>Mas o diagrama é apenas uma representação.</p>
+                <p>O que realmente importa é algo mais próximo disso:</p>
+                <pre><code>Recipe
+   │
+   ├── Step 1
+   │
+   ├── Step 2
+   │
+   ├── Step 3
+   │
+   └── Step 4</code></pre>
+                <p>Cada step possui:</p>
+                <pre><code>tipo
+coluna
+configuração
+ordem</code></pre>
+                <p>Por exemplo:</p>
+                <pre><code>{
+  "type": "pad_left",
+  "column": "cpf",
+  "configuration": {
+    "length": 11,
+    "character": "0"
+  }
+}</code></pre>
+                <p>A interface pode mudar no futuro.</p>
+                <p>A receita continua sendo a mesma.</p>
+
+                <h4>O ganho real não é executar cinco operações de uma vez</h4>
+                <p>
+                  Para mim, o ponto mais interessante das receitas não é
+                  economizar cinco cliques.
+                </p>
+                <p>
+                  É transformar conhecimento sobre tratamento de dados em algo
+                  reproduzível.
+                </p>
+                <p>Antes:</p>
+                <pre><code>"Quando chegar a planilha,
+lembre de remover os pontos do CPF,
+corrigir os zeros,
+converter a data..."</code></pre>
+                <p>Depois:</p>
+                <pre><code>Receita:
+Tratamento de alunos</code></pre>
+                <p>O procedimento deixa de existir apenas na cabeça de alguém.</p>
+                <p>Ele passa a existir como uma sequência executável.</p>
+
+                <h4>E isso muda bastante o uso do Valtron</h4>
+                <p>Sem receitas:</p>
+                <pre><code>arquivo
+   ↓
+investigar
+   ↓
+corrigir
+   ↓
+exportar</code></pre>
+                <p>Com receitas:</p>
+                <pre><code>arquivo novo
+   ↓
+aplicar preparação conhecida
+   ↓
+validar resultado
+   ↓
+investigar exceções
+   ↓
+exportar</code></pre>
+                <p>
+                  O trabalho humano começa a sair da parte repetitiva e ir para
+                  aquilo que realmente precisa de análise.
+                </p>
+                <p>
+                  Esse é o ponto em que o Valtron começa a deixar de ser apenas
+                  uma ferramenta para trabalhar com um arquivo e passa a guardar
+                  <strong>como aquele tipo de dado deve ser preparado</strong>.
+                </p>
+                <p>E isso abre outra possibilidade interessante.</p>
+                <p>
+                  Se consigo importar, transformar, validar e exportar seguindo
+                  uma receita, o próximo passo pode ser deixar de pensar apenas
+                  em arquivos.
+                </p>
+                <p>Por que a entrada precisa ser sempre XLSX ou CSV?</p>
+                <p>Por que a saída precisa ser sempre outro arquivo?</p>
+                <p>
+                  No próximo post quero explorar essa ideia:
+                  <strong>como conectores com PostgreSQL, Parquet e outras
+                  fontes poderiam transformar o Valtron de um Data Preparation
+                  Studio baseado em arquivos em uma ferramenta local para
+                  movimentação e preparação de dados entre diferentes
+                  fontes.</strong>
+                </p>
+              </article>
             </div>
 
             <div class="post-list post-next post-index">
@@ -3669,6 +4086,15 @@ EXPORTAR</code></pre>
                 </div>
                 <h3><a href="posts/data-preparation/">Data Preparation: corrigindo milhares de registros sem editar célula por célula</a></h3>
                 <p>Preview, aplicação em massa no DuckDB, undo por deltas e receitas reutilizáveis.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 09</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="posts/receitas-reutilizaveis-dados/">Quando transformações viram receitas reutilizáveis de dados</a></h3>
+                <p>Receitas de transformação, compatibilidade de colunas, preview, rollback e pipelines reutilizáveis.</p>
               </article>
             </div>
           </div>
