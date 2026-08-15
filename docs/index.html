@@ -351,6 +351,11 @@
         gap: 12px;
       }
 
+      .post-feed {
+        display: grid;
+        gap: 18px;
+      }
+
       .post-meta {
         display: flex;
         flex-wrap: wrap;
@@ -426,6 +431,15 @@
       .post-next {
         position: sticky;
         top: 96px;
+      }
+
+      .post-index a {
+        color: var(--ink);
+      }
+
+      .post-index .post-card {
+        display: grid;
+        gap: 6px;
       }
 
       .caption {
@@ -827,7 +841,8 @@
           </div>
 
           <div class="blog-layout">
-            <article class="post-card featured post-prose">
+            <div class="post-feed">
+              <article id="post-origem-valtron" class="post-card featured post-prose">
               <div class="post-meta">
                 <span>Desenvolvimento</span>
                 <span>15 ago 2026</span>
@@ -983,23 +998,213 @@ renderizar o que o usuário precisa ver</code></pre>
                 600 mil registros de um XLSX em poucos segundos e por que
                 algumas tentativas de otimização deixaram o processo mais lento.
               </p>
-            </article>
+              </article>
 
-            <div class="post-list post-next">
+              <article id="post-importacao-xlsx" class="post-card post-prose">
+              <div class="post-meta">
+                <span>Performance</span>
+                <span>15 ago 2026</span>
+              </div>
+              <h3>Como carreguei mais de 600 mil registros em poucos segundos</h3>
+              <p>
+                Um dos primeiros desafios que coloquei para o Valtron foi
+                importar rapidamente um arquivo XLSX grande.
+              </p>
+              <p>
+                O arquivo que usei nos testes tinha <strong>604.270 linhas e 13
+                colunas</strong>.
+              </p>
+              <p>Minha pergunta inicialmente parecia simples:</p>
+              <blockquote>Qual é a maneira mais rápida de colocar esses dados no DuckDB?</blockquote>
+              <p>A resposta acabou sendo menos óbvia do que eu imaginava.</p>
+
+              <h4>A primeira ideia</h4>
+              <p>
+                Como o backend do Valtron é escrito em Rust, um caminho natural
+                seria abrir o XLSX no Rust, percorrer as células, tratar os
+                valores e depois inserir os dados no DuckDB.
+              </p>
+              <p>Algo parecido com:</p>
+              <pre><code>XLSX
+  ↓
+Rust lê planilha
+  ↓
+converte os dados
+  ↓
+DuckDB</code></pre>
+              <p>Tecnicamente funciona.</p>
+              <p>O problema é que existe um custo escondido nesse processo.</p>
+              <p>
+                O Rust precisa abrir e percorrer o arquivo. Depois os dados
+                precisam ser convertidos e enviados para o banco.
+              </p>
+              <p>
+                Quando estamos falando de algumas centenas de linhas, isso
+                provavelmente não chama atenção.
+              </p>
+              <p>Com mais de 600 mil, começa a aparecer.</p>
+
+              <h4>Testando outras estratégias</h4>
+              <p>Durante o desenvolvimento experimentei caminhos diferentes.</p>
+              <p>Entre eles:</p>
+              <pre><code>XLSX → Rust → CSV → DuckDB</code></pre>
+              <p>Também:</p>
+              <pre><code>XLSX → Rust → Appender → DuckDB</code></pre>
+              <p>E:</p>
+              <pre><code>XLSX → DuckDB read_xlsx</code></pre>
+              <p>Foi importante medir cada etapa separadamente.</p>
+              <p>
+                Não bastava saber que uma importação levou 20 segundos. Eu
+                queria descobrir <strong>onde os 20 segundos estavam sendo
+                gastos</strong>.
+              </p>
+              <p>Por isso comecei a registrar métricas como:</p>
+              <pre><code>abertura do XLSX
+leitura da planilha
+conversão
+geração de CSV
+DuckDB
+Appender
+commit
+tempo total</code></pre>
+              <p>Essa instrumentação acabou mudando algumas decisões do projeto.</p>
+
+              <h4>Uma otimização que piorou a performance</h4>
+              <p>
+                Em determinado momento havia uma etapa em Rust que abria o XLSX
+                antes do DuckDB.
+              </p>
+              <p>
+                A intenção era boa. Eu poderia descobrir informações sobre a
+                planilha, validar algumas coisas e preparar o processo de
+                importação.
+              </p>
+              <p>Só havia um problema.</p>
+              <p>
+                Depois disso, o DuckDB precisava abrir o mesmo XLSX novamente
+                para realmente importar os dados.
+              </p>
+              <p>Na prática:</p>
+              <pre><code>arquivo.xlsx
+    ↓
+Rust abre e percorre
+    ↓
+~5 segundos
+    ↓
+DuckDB abre novamente
+    ↓
+importação</code></pre>
+              <p>Eu estava fazendo trabalho duas vezes.</p>
+              <p>
+                A documentação atual do Valtron inclusive protege essa decisão
+                arquitetural: o caminho padrão não deve abrir previamente a
+                planilha com <code>calamine</code>, percorrer suas células ou
+                gerar um CSV intermediário.
+              </p>
+
+              <h4>Removendo trabalho</h4>
+              <p>
+                A solução que apresentou o melhor comportamento foi muito mais
+                simples:
+              </p>
+              <pre><code>arquivo.xlsx
+     ↓
+DuckDB read_xlsx
+     ↓
+tabela</code></pre>
+              <p>O comando conceitualmente fica próximo de:</p>
+              <pre><code>CREATE TABLE documento AS
+SELECT *
+FROM read_xlsx(
+    'arquivo.xlsx',
+    header = true,
+    all_varchar = true
+);</code></pre>
+              <p>
+                O Valtron atualmente utiliza justamente
+                <code>CREATE TABLE ... AS SELECT * FROM read_xlsx(...)</code>
+                no caminho padrão de XLSX/XLSM.
+              </p>
+              <p>Com isso, eliminei uma passagem completa pelo arquivo.</p>
+
+              <h4>Por que all_varchar = true?</h4>
+              <p>Outra decisão foi importar inicialmente as colunas como texto.</p>
+              <p>Pode parecer estranho para uma ferramenta de análise de dados.</p>
+              <p>Por que uma nota <code>8.5</code> não entra diretamente como decimal?</p>
+              <p>Por que uma data não entra diretamente como <code>DATE</code>?</p>
+              <p>
+                Porque, nessa etapa, minha prioridade é preservar aquilo que
+                chegou no arquivo e evitar inferências inesperadas.
+              </p>
+              <p>O Valtron pode posteriormente analisar uma coluna e concluir:</p>
+              <pre><code>NOTA
+Decimal provável</code></pre>
+              <p>ou:</p>
+              <pre><code>DATA_NASCIMENTO
+Data provável</code></pre>
+              <p>
+                Mas isso é diferente de modificar a representação do dado
+                durante a ingestão.
+              </p>
+              <p>
+                Hoje as colunas importadas são armazenadas como texto justamente
+                para manter esse comportamento previsível.
+              </p>
+
+              <h4>O resultado</h4>
+              <p>
+                Com o caminho direto via <code>read_xlsx</code>, consegui
+                chegar à casa de poucos segundos para importar o arquivo de
+                teste com mais de 600 mil registros.
+              </p>
+              <p>
+                Mas o resultado mais interessante não foi simplesmente o número
+                do benchmark.
+              </p>
+              <p>Foi perceber que:</p>
+              <blockquote>às vezes otimizar significa remover código.</blockquote>
+              <p>
+                Eu estava procurando uma maneira mais rápida de processar o XLSX
+                em Rust quando, na prática, o melhor resultado apareceu ao
+                deixar de processá-lo duas vezes.
+              </p>
+              <p>Essa experiência também criou uma regra para o projeto.</p>
+              <p>
+                O caminho de importação que apresentou o melhor resultado fica
+                protegido. Uma funcionalidade nova de interface, profiling,
+                filtros ou qualidade de dados não deve mexer nele sem uma razão
+                diretamente relacionada à importação e sem um novo benchmark
+                mostrando ganho real.
+              </p>
+              <p>
+                Isso evita uma situação comum em otimização: melhorar a
+                arquitetura no papel e piorar o tempo no cronômetro.
+              </p>
+              <p>
+                No próximo post, pretendo falar sobre a outra metade do
+                problema: depois de importar 600 mil registros rapidamente, como
+                mostrar esses dados sem transformar a interface no novo gargalo?
+              </p>
+              </article>
+            </div>
+
+            <div class="post-list post-next post-index">
               <article class="post-card">
                 <div class="post-meta">
-                  <span>Próximo post</span>
-                  <span>Em breve</span>
+                  <span>Post 01</span>
+                  <span>15 ago 2026</span>
                 </div>
-                <h3>Importando XLSX grande em poucos segundos.</h3>
-                <h4>
-                  O caminho entre tentar otimizar demais e deixar o DuckDB fazer
-                  o trabalho pesado.
-                </h4>
-                <p>
-                  Um registro sobre as tentativas de importação, os gargalos
-                  encontrados e a escolha do fluxo direto com <code>read_xlsx</code>.
-                </p>
+                <h3><a href="#post-origem-valtron">Por que comecei a desenvolver o Valtron</a></h3>
+                <p>Origem do projeto, DuckDB local e a ideia de um data studio desktop.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 02</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-importacao-xlsx">Como carreguei mais de 600 mil registros em poucos segundos</a></h3>
+                <p>Importação direta com DuckDB, métricas e a decisão de remover trabalho duplicado.</p>
               </article>
             </div>
           </div>
