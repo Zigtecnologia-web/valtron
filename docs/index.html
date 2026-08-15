@@ -1186,6 +1186,309 @@ Data provável</code></pre>
                 mostrar esses dados sem transformar a interface no novo gargalo?
               </p>
               </article>
+
+              <article id="post-grid-virtualizada" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Interface</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3>Importar 600 mil linhas rápido não adianta se a interface travar</h3>
+                <p>
+                Nos primeiros testes do Valtron, boa parte da minha atenção
+                estava no tempo de importação.
+                </p>
+                <p>
+                O objetivo era simples: pegar um XLSX grande, colocar os dados
+                no DuckDB e disponibilizá-los para consulta o mais rápido
+                possível.
+                </p>
+                <p>
+                Depois de alguns experimentos, consegui chegar a poucos segundos
+                para um arquivo com mais de 600 mil registros.
+                </p>
+                <p>Só que isso criou outro problema.</p>
+                <blockquote>O banco conseguia lidar com os dados. A interface também precisava conseguir.</blockquote>
+
+              <h4>O problema mudou de lugar</h4>
+              <p>Imagine um arquivo com:</p>
+              <pre><code>604.270 linhas
+13 colunas</code></pre>
+              <p>Isso representa quase 8 milhões de células.</p>
+              <p>
+                Mesmo que os dados já estejam disponíveis no DuckDB, não faria
+                sentido buscar 604 mil registros e criar milhares ou milhões de
+                elementos HTML para mostrá-los.
+              </p>
+              <p>Seria algo parecido com:</p>
+              <pre><code>DuckDB
+   ↓
+SELECT 600.000 linhas
+   ↓
+Rust
+   ↓
+TypeScript
+   ↓
+DOM
+   ↓
+problema</code></pre>
+              <p>Nesse cenário, eu teria uma importação rápida e uma interface lenta.</p>
+              <p>A otimização só teria mudado o gargalo de lugar.</p>
+
+              <h4>A grid não precisa conhecer o arquivo inteiro</h4>
+              <p>A pergunta que ajudou a resolver isso foi:</p>
+              <blockquote>Se o usuário consegue enxergar apenas algumas linhas na tela, por que carregar 600 mil?</blockquote>
+              <p>A grid do Valtron passou então a trabalhar com <strong>virtualização</strong>.</p>
+              <p>A ideia é relativamente simples.</p>
+              <p>Suponha que o documento tenha:</p>
+              <pre><code>604.270 registros</code></pre>
+              <p>mas naquele momento a tela mostre algo próximo de:</p>
+              <pre><code>20 ou 30 registros</code></pre>
+              <p>Não existe necessidade de renderizar os outros 604 mil.</p>
+              <p>O Valtron trabalha com pequenas janelas dos dados:</p>
+              <pre><code>             604.270 linhas
+                   │
+                   │
+                   ▼
+        ┌─────────────────────┐
+        │       DuckDB        │
+        └──────────┬──────────┘
+                   │
+             busca 100
+                   │
+                   ▼
+        ┌─────────────────────┐
+        │   janela da grid    │
+        │                     │
+        │ linha 1200          │
+        │ linha 1201          │
+        │ linha 1202          │
+        │ ...                 │
+        └─────────────────────┘</code></pre>
+              <p>Atualmente, a grid utiliza lotes de 100 linhas.</p>
+
+              <h4>O scroll passa a determinar quais dados são necessários</h4>
+              <p>
+                Conforme o usuário navega, o frontend calcula qual região da
+                tabela deveria estar visível.
+              </p>
+              <p>Então solicita ao backend apenas aquela janela.</p>
+              <p>
+                O backend possui uma operação específica para isso e retorna os
+                valores das colunas necessárias, além das informações usadas
+                para saber se existe um próximo lote.
+              </p>
+              <p>Conceitualmente:</p>
+              <pre><code>Usuário faz scroll
+       ↓
+Frontend calcula a região
+       ↓
+"Preciso das linhas 1200 até 1299"
+       ↓
+Rust
+       ↓
+DuckDB
+       ↓
+100 registros
+       ↓
+Grid</code></pre>
+              <p>
+                Assim, o tamanho total do documento deixa de determinar
+                diretamente quantos elementos precisam existir na interface.
+              </p>
+
+              <h4>Mas buscar somente quando o usuário chega também não é suficiente</h4>
+              <p>Existe outro detalhe.</p>
+              <p>
+                Se a aplicação esperar o usuário chegar ao final de um lote para
+                só então buscar o próximo, pode aparecer uma pequena pausa
+                durante o scroll.
+              </p>
+              <p>Por isso implementei <strong>prefetch</strong>.</p>
+              <p>
+                Antes de o usuário realmente precisar do próximo conjunto de
+                registros, o Valtron já pode começar a buscá-lo.
+              </p>
+              <p>O comportamento fica aproximadamente assim:</p>
+              <pre><code>Lote atual
+
+0 ───────────────────── 100
+                  ↑
+             usuário
+
+              ↓
+
+Valtron percebe que está
+se aproximando do final
+
+              ↓
+
+busca 100 ───────────── 200</code></pre>
+              <p>
+                Atualmente o prefetch acontece quando a navegação alcança
+                aproximadamente 75% da região configurada.
+              </p>
+              <p>
+                A intenção é simples: quando o usuário chegar aos próximos
+                registros, eles provavelmente já estarão disponíveis.
+              </p>
+
+              <h4>Cache também precisa ter limite</h4>
+              <p>Uma solução fácil seria continuar guardando todos os lotes já carregados.</p>
+              <p>Mas isso recriaria o problema original aos poucos.</p>
+              <p>Depois de navegar bastante:</p>
+              <pre><code>100 linhas
+200
+500
+2.000
+10.000
+50.000
+...</code></pre>
+              <p>
+                a aplicação começaria a acumular dados que o usuário nem está
+                mais vendo.
+              </p>
+              <p>Por isso o cache também possui limite.</p>
+              <p>
+                O Valtron mantém os lotes próximos da região atual e pode
+                descartar os mais distantes.
+              </p>
+              <p>A configuração atual limita o cache a cinco lotes.</p>
+              <p>A ideia é trabalhar com uma janela móvel:</p>
+              <pre><code>descartado
+
+[ lote 1 ]
+
+             cache atual
+
+        [ lote 8 ]
+        [ lote 9 ]
+        [ lote 10 ] ← usuário
+        [ lote 11 ]
+        [ lote 12 ]
+
+                         [ lote 20 ]
+                         ainda nem foi buscado</code></pre>
+              <p>Isso mantém o consumo de memória mais previsível.</p>
+
+              <h4>Overscan ajuda a esconder a virtualização</h4>
+              <p>Existe ainda um pequeno detalhe visual.</p>
+              <p>
+                Se fossem renderizadas somente as linhas exatamente visíveis, um
+                scroll rápido poderia revelar regiões ainda não renderizadas.
+              </p>
+              <p>
+                Por isso existem algumas linhas adicionais antes e depois da
+                região visível.
+              </p>
+              <p>É o chamado <strong>overscan</strong>.</p>
+              <p>No Valtron, atualmente são utilizadas oito linhas de overscan.</p>
+              <p>Para o usuário parece uma tabela normal.</p>
+              <p>
+                Internamente, porém, apenas uma pequena parte dela está realmente
+                sendo renderizada naquele momento.
+              </p>
+
+              <h4>E filtros e ordenação?</h4>
+              <p>Esse foi outro ponto importante.</p>
+              <p>Não faria sentido carregar todo o documento no frontend para depois executar:</p>
+              <pre><code>rows.filter(...)</code></pre>
+              <p>ou:</p>
+              <pre><code>rows.sort(...)</code></pre>
+              <p>Os filtros e a ordenação precisam acontecer próximos dos dados.</p>
+              <p>Então o frontend envia ao backend informações como:</p>
+              <pre><code>offset
+limit
+filtros
+ordenação
+colunas visíveis</code></pre>
+              <p>e o DuckDB executa a consulta correspondente.</p>
+              <p>O resultado volta já preparado para aquela janela.</p>
+              <p>A divisão de responsabilidades fica aproximadamente assim:</p>
+              <pre><code>DUCKDB
+
+filtrar
+ordenar
+paginar
+agregar
+
+      ↓
+
+RUST
+
+orquestrar
+validar
+preparar resposta
+
+      ↓
+
+TYPESCRIPT
+
+virtualizar
+cachear
+renderizar
+interagir</code></pre>
+              <p>Cada camada faz aquilo em que é melhor.</p>
+
+              <h4>Colunas também importam</h4>
+              <p>Outra otimização interessante apareceu depois.</p>
+              <p>
+                Se um documento possui 50 colunas, mas o usuário escolheu
+                visualizar apenas 8, por que transportar as outras 42?
+              </p>
+              <p>
+                O backend da janela virtualizada consegue receber quais colunas
+                estão visíveis e retornar somente os valores necessários para
+                elas.
+              </p>
+              <p>É a mesma ideia aplicada em outra direção:</p>
+              <blockquote>não buscar dados simplesmente porque eles existem.</blockquote>
+              <p>Buscar aquilo que é necessário naquele momento.</p>
+
+              <h4>O que aprendi com essa parte do Valtron</h4>
+              <p>
+                Trabalhar com grandes volumes não é apenas fazer o banco
+                responder rápido.
+              </p>
+              <p>Existe um caminho inteiro:</p>
+              <pre><code>disco
+ ↓
+DuckDB
+ ↓
+Rust
+ ↓
+serialização
+ ↓
+TypeScript
+ ↓
+memória
+ ↓
+DOM
+ ↓
+tela</code></pre>
+              <p>O gargalo pode aparecer em qualquer ponto.</p>
+              <p>
+                No caso do Valtron, a estratégia acabou ficando baseada em uma
+                regra bastante simples:
+              </p>
+              <blockquote>o tamanho do dataset não deveria ser o tamanho do trabalho feito pela interface.</blockquote>
+              <p>
+                Se existem 600 mil linhas no banco e o usuário está olhando 30,
+                a interface deveria trabalhar o máximo possível como se
+                existissem apenas aquelas 30.
+              </p>
+              <p>DuckDB continua sabendo que existem 600 mil.</p>
+              <p>A grid não precisa saber de todas ao mesmo tempo.</p>
+              <p>
+                Foi essa separação que permitiu sair de uma importação rápida
+                para uma navegação que também continua responsiva.
+              </p>
+              <p>
+                No próximo post, quero entrar em outra decisão que parece
+                estranha à primeira vista: por que o Valtron importa as colunas
+                como texto e só depois tenta descobrir se aquilo é número, data,
+                CPF ou outro tipo de dado.
+              </p>
+              </article>
             </div>
 
             <div class="post-list post-next post-index">
@@ -1205,6 +1508,15 @@ Data provável</code></pre>
                 </div>
                 <h3><a href="#post-importacao-xlsx">Como carreguei mais de 600 mil registros em poucos segundos</a></h3>
                 <p>Importação direta com DuckDB, métricas e a decisão de remover trabalho duplicado.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 03</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-grid-virtualizada">Importar 600 mil linhas rápido não adianta se a interface travar</a></h3>
+                <p>Virtualização, prefetch, cache limitado e consultas por janela.</p>
               </article>
             </div>
           </div>
