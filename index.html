@@ -325,6 +325,123 @@
         gap: 18px;
       }
 
+      .blog-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .post-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.74));
+        padding: 20px;
+      }
+
+      .post-card.featured {
+        min-height: 100%;
+        background:
+          linear-gradient(180deg, rgba(34, 197, 94, 0.12), rgba(18, 26, 37, 0.78)),
+          var(--panel);
+      }
+
+      .post-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .post-feed {
+        display: grid;
+        gap: 18px;
+      }
+
+      .post-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .post-card h3 {
+        margin-bottom: 8px;
+        font-size: clamp(1.2rem, 2vw, 1.7rem);
+        line-height: 1.12;
+      }
+
+      .post-card h4 {
+        margin: 0 0 10px;
+        color: var(--muted-strong);
+        font-size: 1rem;
+        line-height: 1.32;
+      }
+
+      .post-card p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .post-prose {
+        display: grid;
+        gap: 18px;
+      }
+
+      .post-prose h3 {
+        font-size: clamp(1.8rem, 3vw, 2.7rem);
+      }
+
+      .post-prose h4 {
+        margin-top: 8px;
+        color: var(--ink);
+        font-size: 1.14rem;
+      }
+
+      .post-prose blockquote {
+        margin: 0;
+        border-left: 4px solid var(--accent);
+        border-radius: 8px;
+        background: rgba(34, 197, 94, 0.08);
+        color: var(--muted-strong);
+        font-size: 1.04rem;
+        font-weight: 750;
+        padding: 14px 16px;
+      }
+
+      .post-prose pre {
+        margin: 0;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #070b11;
+        color: #dbeafe;
+        padding: 14px 16px;
+      }
+
+      .post-prose code {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.9rem;
+      }
+
+      .post-next {
+        position: sticky;
+        top: 96px;
+      }
+
+      .post-index a {
+        color: var(--ink);
+      }
+
+      .post-index .post-card {
+        display: grid;
+        gap: 6px;
+      }
+
       .caption {
         margin: 0;
         padding: 13px 15px;
@@ -460,6 +577,7 @@
         .feature-grid,
         .sales-grid,
         .stack,
+        .blog-layout,
         .capture-grid,
         .proof {
           grid-template-columns: 1fr;
@@ -477,6 +595,7 @@
         <nav class="nav" aria-label="Navegação principal">
           <a href="#recursos">Recursos</a>
           <a href="#por-que-usar">Por que usar</a>
+          <a href="#blog">Blog</a>
           <a href="#interface">Interface</a>
           <a href="https://github.com/Zigtecnologia-web/valtron#readme">README</a>
         </nav>
@@ -706,6 +825,1077 @@
                 Painel lateral com workspaces e documentos importados.
               </figcaption>
             </figure>
+          </div>
+        </div>
+      </section>
+
+      <section id="blog" class="sales-band">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Blog</p>
+            <h2>Postagens sobre evolução, decisões técnicas e uso do Valtron.</h2>
+            <p>
+              Um espaço para registrar novidades do produto, explicar escolhas
+              de arquitetura e organizar textos sobre preparação de dados.
+            </p>
+          </div>
+
+          <div class="blog-layout">
+            <div class="post-feed">
+              <article id="post-origem-valtron" class="post-card featured post-prose">
+              <div class="post-meta">
+                <span>Desenvolvimento</span>
+                <span>15 ago 2026</span>
+              </div>
+              <h3>Por que comecei a desenvolver o Valtron</h3>
+              <p>
+                O Valtron começou a partir de um problema relativamente simples:
+                trabalhar com arquivos de dados grandes no desktop sem
+                transformar isso em um processo complicado.
+              </p>
+              <p>
+                Planilhas funcionam muito bem para uma quantidade enorme de
+                situações. O problema começa quando o volume cresce.
+              </p>
+              <p>
+                Um arquivo com centenas de milhares de linhas pode até abrir,
+                mas abrir o arquivo é apenas uma parte do problema. Depois você
+                precisa navegar pelos dados, filtrar, ordenar, procurar
+                inconsistências, fazer consultas e, eventualmente, alterar ou
+                exportar alguma coisa.
+              </p>
+              <p>Foi a partir desse cenário que comecei a desenvolver o Valtron.</p>
+
+              <h4>A ideia inicial</h4>
+              <p>
+                O objetivo era construir uma aplicação desktop capaz de importar
+                arquivos grandes e permitir trabalhar com eles localmente.
+              </p>
+              <p>Sem precisar subir o arquivo para algum serviço.</p>
+              <p>Sem precisar configurar um banco de dados externo.</p>
+              <p>
+                Sem precisar criar um script diferente toda vez que eu quisesse
+                investigar alguma coisa.
+              </p>
+              <p>O fluxo deveria ser simples:</p>
+              <pre><code>XLSX / CSV
+     ↓
+   Valtron
+     ↓
+ explorar os dados</code></pre>
+              <p>
+                Só que rapidamente percebi que importar rápido não seria
+                suficiente.
+              </p>
+              <p>
+                Se eu conseguisse carregar 600 mil linhas em poucos segundos,
+                mas a interface travasse tentando renderizar tudo, eu apenas
+                teria movido o gargalo de lugar.
+              </p>
+              <p>Foi aí que o projeto começou a ficar mais interessante.</p>
+
+              <h4>DuckDB como motor local</h4>
+              <p>Escolhi o DuckDB como banco local do Valtron.</p>
+              <p>
+                A ideia combina bastante com o tipo de aplicação que eu queria
+                construir. Em vez de precisar manter um PostgreSQL ou outro
+                servidor rodando, o banco fica embutido na própria aplicação.
+              </p>
+              <p>O arquivo entra e vira uma tabela local no DuckDB.</p>
+              <p>Hoje, cada documento importado pelo Valtron é persistido dessa forma.</p>
+              <p>Isso permite usar SQL para fazer boa parte do trabalho pesado:</p>
+              <pre><code>SELECT COUNT(*)
+FROM documento;</code></pre>
+              <p>ou:</p>
+              <pre><code>SELECT cidade, COUNT(*)
+FROM documento
+GROUP BY cidade;</code></pre>
+              <p>
+                A interface não precisa conhecer centenas de milhares de
+                registros de uma vez. Ela pede ao DuckDB apenas aquilo de que
+                precisa.
+              </p>
+
+              <h4>A interface também precisava ser econômica</h4>
+              <p>Essa foi outra parte importante do projeto.</p>
+              <p>
+                Se existem 600 mil registros, não existe motivo para criar 600
+                mil elementos HTML se o usuário consegue enxergar talvez 20 ou
+                30 linhas naquele momento.
+              </p>
+              <p>Por isso a grid do Valtron é virtualizada.</p>
+              <p>
+                Ela trabalha com pequenos lotes de dados e mantém em memória
+                somente as regiões próximas daquela que está sendo visualizada.
+                Atualmente o Valtron trabalha com lotes de 100 linhas, overscan
+                e cache limitado de lotes.
+              </p>
+              <p>A lógica é basicamente:</p>
+              <pre><code>600.000 registros no DuckDB
+
+          ↓
+
+buscar somente uma pequena janela
+
+          ↓
+
+renderizar o que o usuário precisa ver</code></pre>
+              <p>
+                Parece uma diferença pequena, mas muda completamente o
+                comportamento da aplicação.
+              </p>
+
+              <h4>O Valtron começou a crescer</h4>
+              <p>
+                Depois que importação e navegação ficaram funcionando bem,
+                começaram a aparecer outras necessidades.
+              </p>
+              <p>
+                Hoje já consigo organizar documentos em workspaces, filtrar e
+                ordenar dados, escolher as colunas visíveis, redimensionar
+                colunas, editar células, executar consultas SQL e exportar
+                documentos novamente para CSV, TSV ou XLSX.
+              </p>
+              <p>
+                Mais recentemente comecei a trabalhar também com profiling e
+                qualidade dos dados.
+              </p>
+              <p>A ideia deixou de ser apenas:</p>
+              <blockquote>abrir um arquivo grande.</blockquote>
+              <p>E passou a ser:</p>
+              <blockquote>abrir, entender e trabalhar com esse arquivo.</blockquote>
+              <p>
+                Essa diferença está direcionando bastante o desenvolvimento do
+                projeto.
+              </p>
+
+              <h4>O que o Valtron está se tornando</h4>
+              <p>Hoje penso no Valtron como um pequeno data studio local.</p>
+              <p>A arquitetura continua relativamente simples:</p>
+              <pre><code>Tauri
+  │
+  ├── TypeScript
+  │      ↓
+  │   Interface
+  │
+  └── Rust
+         ↓
+       DuckDB</code></pre>
+              <p>
+                O Tauri cuida da aplicação desktop, TypeScript da interface,
+                Rust das operações de backend e DuckDB do processamento
+                analítico dos dados.
+              </p>
+              <p>Ainda há bastante coisa que quero experimentar.</p>
+              <p>Mas uma das ideias que pretendo preservar é esta:</p>
+              <blockquote>
+                Os dados ficam locais e o trabalho pesado deve acontecer o mais
+                próximo possível deles.
+              </blockquote>
+              <p>
+                No próximo post vou entrar em uma das partes que mais me fizeram
+                experimentar durante o desenvolvimento: como importar mais de
+                600 mil registros de um XLSX em poucos segundos e por que
+                algumas tentativas de otimização deixaram o processo mais lento.
+              </p>
+              </article>
+
+              <article id="post-importacao-xlsx" class="post-card post-prose">
+              <div class="post-meta">
+                <span>Performance</span>
+                <span>15 ago 2026</span>
+              </div>
+              <h3>Como carreguei mais de 600 mil registros em poucos segundos</h3>
+              <p>
+                Um dos primeiros desafios que coloquei para o Valtron foi
+                importar rapidamente um arquivo XLSX grande.
+              </p>
+              <p>
+                O arquivo que usei nos testes tinha <strong>604.270 linhas e 13
+                colunas</strong>.
+              </p>
+              <p>Minha pergunta inicialmente parecia simples:</p>
+              <blockquote>Qual é a maneira mais rápida de colocar esses dados no DuckDB?</blockquote>
+              <p>A resposta acabou sendo menos óbvia do que eu imaginava.</p>
+
+              <h4>A primeira ideia</h4>
+              <p>
+                Como o backend do Valtron é escrito em Rust, um caminho natural
+                seria abrir o XLSX no Rust, percorrer as células, tratar os
+                valores e depois inserir os dados no DuckDB.
+              </p>
+              <p>Algo parecido com:</p>
+              <pre><code>XLSX
+  ↓
+Rust lê planilha
+  ↓
+converte os dados
+  ↓
+DuckDB</code></pre>
+              <p>Tecnicamente funciona.</p>
+              <p>O problema é que existe um custo escondido nesse processo.</p>
+              <p>
+                O Rust precisa abrir e percorrer o arquivo. Depois os dados
+                precisam ser convertidos e enviados para o banco.
+              </p>
+              <p>
+                Quando estamos falando de algumas centenas de linhas, isso
+                provavelmente não chama atenção.
+              </p>
+              <p>Com mais de 600 mil, começa a aparecer.</p>
+
+              <h4>Testando outras estratégias</h4>
+              <p>Durante o desenvolvimento experimentei caminhos diferentes.</p>
+              <p>Entre eles:</p>
+              <pre><code>XLSX → Rust → CSV → DuckDB</code></pre>
+              <p>Também:</p>
+              <pre><code>XLSX → Rust → Appender → DuckDB</code></pre>
+              <p>E:</p>
+              <pre><code>XLSX → DuckDB read_xlsx</code></pre>
+              <p>Foi importante medir cada etapa separadamente.</p>
+              <p>
+                Não bastava saber que uma importação levou 20 segundos. Eu
+                queria descobrir <strong>onde os 20 segundos estavam sendo
+                gastos</strong>.
+              </p>
+              <p>Por isso comecei a registrar métricas como:</p>
+              <pre><code>abertura do XLSX
+leitura da planilha
+conversão
+geração de CSV
+DuckDB
+Appender
+commit
+tempo total</code></pre>
+              <p>Essa instrumentação acabou mudando algumas decisões do projeto.</p>
+
+              <h4>Uma otimização que piorou a performance</h4>
+              <p>
+                Em determinado momento havia uma etapa em Rust que abria o XLSX
+                antes do DuckDB.
+              </p>
+              <p>
+                A intenção era boa. Eu poderia descobrir informações sobre a
+                planilha, validar algumas coisas e preparar o processo de
+                importação.
+              </p>
+              <p>Só havia um problema.</p>
+              <p>
+                Depois disso, o DuckDB precisava abrir o mesmo XLSX novamente
+                para realmente importar os dados.
+              </p>
+              <p>Na prática:</p>
+              <pre><code>arquivo.xlsx
+    ↓
+Rust abre e percorre
+    ↓
+~5 segundos
+    ↓
+DuckDB abre novamente
+    ↓
+importação</code></pre>
+              <p>Eu estava fazendo trabalho duas vezes.</p>
+              <p>
+                A documentação atual do Valtron inclusive protege essa decisão
+                arquitetural: o caminho padrão não deve abrir previamente a
+                planilha com <code>calamine</code>, percorrer suas células ou
+                gerar um CSV intermediário.
+              </p>
+
+              <h4>Removendo trabalho</h4>
+              <p>
+                A solução que apresentou o melhor comportamento foi muito mais
+                simples:
+              </p>
+              <pre><code>arquivo.xlsx
+     ↓
+DuckDB read_xlsx
+     ↓
+tabela</code></pre>
+              <p>O comando conceitualmente fica próximo de:</p>
+              <pre><code>CREATE TABLE documento AS
+SELECT *
+FROM read_xlsx(
+    'arquivo.xlsx',
+    header = true,
+    all_varchar = true
+);</code></pre>
+              <p>
+                O Valtron atualmente utiliza justamente
+                <code>CREATE TABLE ... AS SELECT * FROM read_xlsx(...)</code>
+                no caminho padrão de XLSX/XLSM.
+              </p>
+              <p>Com isso, eliminei uma passagem completa pelo arquivo.</p>
+
+              <h4>Por que all_varchar = true?</h4>
+              <p>Outra decisão foi importar inicialmente as colunas como texto.</p>
+              <p>Pode parecer estranho para uma ferramenta de análise de dados.</p>
+              <p>Por que uma nota <code>8.5</code> não entra diretamente como decimal?</p>
+              <p>Por que uma data não entra diretamente como <code>DATE</code>?</p>
+              <p>
+                Porque, nessa etapa, minha prioridade é preservar aquilo que
+                chegou no arquivo e evitar inferências inesperadas.
+              </p>
+              <p>O Valtron pode posteriormente analisar uma coluna e concluir:</p>
+              <pre><code>NOTA
+Decimal provável</code></pre>
+              <p>ou:</p>
+              <pre><code>DATA_NASCIMENTO
+Data provável</code></pre>
+              <p>
+                Mas isso é diferente de modificar a representação do dado
+                durante a ingestão.
+              </p>
+              <p>
+                Hoje as colunas importadas são armazenadas como texto justamente
+                para manter esse comportamento previsível.
+              </p>
+
+              <h4>O resultado</h4>
+              <p>
+                Com o caminho direto via <code>read_xlsx</code>, consegui
+                chegar à casa de poucos segundos para importar o arquivo de
+                teste com mais de 600 mil registros.
+              </p>
+              <p>
+                Mas o resultado mais interessante não foi simplesmente o número
+                do benchmark.
+              </p>
+              <p>Foi perceber que:</p>
+              <blockquote>às vezes otimizar significa remover código.</blockquote>
+              <p>
+                Eu estava procurando uma maneira mais rápida de processar o XLSX
+                em Rust quando, na prática, o melhor resultado apareceu ao
+                deixar de processá-lo duas vezes.
+              </p>
+              <p>Essa experiência também criou uma regra para o projeto.</p>
+              <p>
+                O caminho de importação que apresentou o melhor resultado fica
+                protegido. Uma funcionalidade nova de interface, profiling,
+                filtros ou qualidade de dados não deve mexer nele sem uma razão
+                diretamente relacionada à importação e sem um novo benchmark
+                mostrando ganho real.
+              </p>
+              <p>
+                Isso evita uma situação comum em otimização: melhorar a
+                arquitetura no papel e piorar o tempo no cronômetro.
+              </p>
+              <p>
+                No próximo post, pretendo falar sobre a outra metade do
+                problema: depois de importar 600 mil registros rapidamente, como
+                mostrar esses dados sem transformar a interface no novo gargalo?
+              </p>
+              </article>
+
+              <article id="post-grid-virtualizada" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Interface</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3>Importar 600 mil linhas rápido não adianta se a interface travar</h3>
+                <p>
+                Nos primeiros testes do Valtron, boa parte da minha atenção
+                estava no tempo de importação.
+                </p>
+                <p>
+                O objetivo era simples: pegar um XLSX grande, colocar os dados
+                no DuckDB e disponibilizá-los para consulta o mais rápido
+                possível.
+                </p>
+                <p>
+                Depois de alguns experimentos, consegui chegar a poucos segundos
+                para um arquivo com mais de 600 mil registros.
+                </p>
+                <p>Só que isso criou outro problema.</p>
+                <blockquote>O banco conseguia lidar com os dados. A interface também precisava conseguir.</blockquote>
+
+              <h4>O problema mudou de lugar</h4>
+              <p>Imagine um arquivo com:</p>
+              <pre><code>604.270 linhas
+13 colunas</code></pre>
+              <p>Isso representa quase 8 milhões de células.</p>
+              <p>
+                Mesmo que os dados já estejam disponíveis no DuckDB, não faria
+                sentido buscar 604 mil registros e criar milhares ou milhões de
+                elementos HTML para mostrá-los.
+              </p>
+              <p>Seria algo parecido com:</p>
+              <pre><code>DuckDB
+   ↓
+SELECT 600.000 linhas
+   ↓
+Rust
+   ↓
+TypeScript
+   ↓
+DOM
+   ↓
+problema</code></pre>
+              <p>Nesse cenário, eu teria uma importação rápida e uma interface lenta.</p>
+              <p>A otimização só teria mudado o gargalo de lugar.</p>
+
+              <h4>A grid não precisa conhecer o arquivo inteiro</h4>
+              <p>A pergunta que ajudou a resolver isso foi:</p>
+              <blockquote>Se o usuário consegue enxergar apenas algumas linhas na tela, por que carregar 600 mil?</blockquote>
+              <p>A grid do Valtron passou então a trabalhar com <strong>virtualização</strong>.</p>
+              <p>A ideia é relativamente simples.</p>
+              <p>Suponha que o documento tenha:</p>
+              <pre><code>604.270 registros</code></pre>
+              <p>mas naquele momento a tela mostre algo próximo de:</p>
+              <pre><code>20 ou 30 registros</code></pre>
+              <p>Não existe necessidade de renderizar os outros 604 mil.</p>
+              <p>O Valtron trabalha com pequenas janelas dos dados:</p>
+              <pre><code>             604.270 linhas
+                   │
+                   │
+                   ▼
+        ┌─────────────────────┐
+        │       DuckDB        │
+        └──────────┬──────────┘
+                   │
+             busca 100
+                   │
+                   ▼
+        ┌─────────────────────┐
+        │   janela da grid    │
+        │                     │
+        │ linha 1200          │
+        │ linha 1201          │
+        │ linha 1202          │
+        │ ...                 │
+        └─────────────────────┘</code></pre>
+              <p>Atualmente, a grid utiliza lotes de 100 linhas.</p>
+
+              <h4>O scroll passa a determinar quais dados são necessários</h4>
+              <p>
+                Conforme o usuário navega, o frontend calcula qual região da
+                tabela deveria estar visível.
+              </p>
+              <p>Então solicita ao backend apenas aquela janela.</p>
+              <p>
+                O backend possui uma operação específica para isso e retorna os
+                valores das colunas necessárias, além das informações usadas
+                para saber se existe um próximo lote.
+              </p>
+              <p>Conceitualmente:</p>
+              <pre><code>Usuário faz scroll
+       ↓
+Frontend calcula a região
+       ↓
+"Preciso das linhas 1200 até 1299"
+       ↓
+Rust
+       ↓
+DuckDB
+       ↓
+100 registros
+       ↓
+Grid</code></pre>
+              <p>
+                Assim, o tamanho total do documento deixa de determinar
+                diretamente quantos elementos precisam existir na interface.
+              </p>
+
+              <h4>Mas buscar somente quando o usuário chega também não é suficiente</h4>
+              <p>Existe outro detalhe.</p>
+              <p>
+                Se a aplicação esperar o usuário chegar ao final de um lote para
+                só então buscar o próximo, pode aparecer uma pequena pausa
+                durante o scroll.
+              </p>
+              <p>Por isso implementei <strong>prefetch</strong>.</p>
+              <p>
+                Antes de o usuário realmente precisar do próximo conjunto de
+                registros, o Valtron já pode começar a buscá-lo.
+              </p>
+              <p>O comportamento fica aproximadamente assim:</p>
+              <pre><code>Lote atual
+
+0 ───────────────────── 100
+                  ↑
+             usuário
+
+              ↓
+
+Valtron percebe que está
+se aproximando do final
+
+              ↓
+
+busca 100 ───────────── 200</code></pre>
+              <p>
+                Atualmente o prefetch acontece quando a navegação alcança
+                aproximadamente 75% da região configurada.
+              </p>
+              <p>
+                A intenção é simples: quando o usuário chegar aos próximos
+                registros, eles provavelmente já estarão disponíveis.
+              </p>
+
+              <h4>Cache também precisa ter limite</h4>
+              <p>Uma solução fácil seria continuar guardando todos os lotes já carregados.</p>
+              <p>Mas isso recriaria o problema original aos poucos.</p>
+              <p>Depois de navegar bastante:</p>
+              <pre><code>100 linhas
+200
+500
+2.000
+10.000
+50.000
+...</code></pre>
+              <p>
+                a aplicação começaria a acumular dados que o usuário nem está
+                mais vendo.
+              </p>
+              <p>Por isso o cache também possui limite.</p>
+              <p>
+                O Valtron mantém os lotes próximos da região atual e pode
+                descartar os mais distantes.
+              </p>
+              <p>A configuração atual limita o cache a cinco lotes.</p>
+              <p>A ideia é trabalhar com uma janela móvel:</p>
+              <pre><code>descartado
+
+[ lote 1 ]
+
+             cache atual
+
+        [ lote 8 ]
+        [ lote 9 ]
+        [ lote 10 ] ← usuário
+        [ lote 11 ]
+        [ lote 12 ]
+
+                         [ lote 20 ]
+                         ainda nem foi buscado</code></pre>
+              <p>Isso mantém o consumo de memória mais previsível.</p>
+
+              <h4>Overscan ajuda a esconder a virtualização</h4>
+              <p>Existe ainda um pequeno detalhe visual.</p>
+              <p>
+                Se fossem renderizadas somente as linhas exatamente visíveis, um
+                scroll rápido poderia revelar regiões ainda não renderizadas.
+              </p>
+              <p>
+                Por isso existem algumas linhas adicionais antes e depois da
+                região visível.
+              </p>
+              <p>É o chamado <strong>overscan</strong>.</p>
+              <p>No Valtron, atualmente são utilizadas oito linhas de overscan.</p>
+              <p>Para o usuário parece uma tabela normal.</p>
+              <p>
+                Internamente, porém, apenas uma pequena parte dela está realmente
+                sendo renderizada naquele momento.
+              </p>
+
+              <h4>E filtros e ordenação?</h4>
+              <p>Esse foi outro ponto importante.</p>
+              <p>Não faria sentido carregar todo o documento no frontend para depois executar:</p>
+              <pre><code>rows.filter(...)</code></pre>
+              <p>ou:</p>
+              <pre><code>rows.sort(...)</code></pre>
+              <p>Os filtros e a ordenação precisam acontecer próximos dos dados.</p>
+              <p>Então o frontend envia ao backend informações como:</p>
+              <pre><code>offset
+limit
+filtros
+ordenação
+colunas visíveis</code></pre>
+              <p>e o DuckDB executa a consulta correspondente.</p>
+              <p>O resultado volta já preparado para aquela janela.</p>
+              <p>A divisão de responsabilidades fica aproximadamente assim:</p>
+              <pre><code>DUCKDB
+
+filtrar
+ordenar
+paginar
+agregar
+
+      ↓
+
+RUST
+
+orquestrar
+validar
+preparar resposta
+
+      ↓
+
+TYPESCRIPT
+
+virtualizar
+cachear
+renderizar
+interagir</code></pre>
+              <p>Cada camada faz aquilo em que é melhor.</p>
+
+              <h4>Colunas também importam</h4>
+              <p>Outra otimização interessante apareceu depois.</p>
+              <p>
+                Se um documento possui 50 colunas, mas o usuário escolheu
+                visualizar apenas 8, por que transportar as outras 42?
+              </p>
+              <p>
+                O backend da janela virtualizada consegue receber quais colunas
+                estão visíveis e retornar somente os valores necessários para
+                elas.
+              </p>
+              <p>É a mesma ideia aplicada em outra direção:</p>
+              <blockquote>não buscar dados simplesmente porque eles existem.</blockquote>
+              <p>Buscar aquilo que é necessário naquele momento.</p>
+
+              <h4>O que aprendi com essa parte do Valtron</h4>
+              <p>
+                Trabalhar com grandes volumes não é apenas fazer o banco
+                responder rápido.
+              </p>
+              <p>Existe um caminho inteiro:</p>
+              <pre><code>disco
+ ↓
+DuckDB
+ ↓
+Rust
+ ↓
+serialização
+ ↓
+TypeScript
+ ↓
+memória
+ ↓
+DOM
+ ↓
+tela</code></pre>
+              <p>O gargalo pode aparecer em qualquer ponto.</p>
+              <p>
+                No caso do Valtron, a estratégia acabou ficando baseada em uma
+                regra bastante simples:
+              </p>
+              <blockquote>o tamanho do dataset não deveria ser o tamanho do trabalho feito pela interface.</blockquote>
+              <p>
+                Se existem 600 mil linhas no banco e o usuário está olhando 30,
+                a interface deveria trabalhar o máximo possível como se
+                existissem apenas aquelas 30.
+              </p>
+              <p>DuckDB continua sabendo que existem 600 mil.</p>
+              <p>A grid não precisa saber de todas ao mesmo tempo.</p>
+              <p>
+                Foi essa separação que permitiu sair de uma importação rápida
+                para uma navegação que também continua responsiva.
+              </p>
+              <p>
+                No próximo post, quero entrar em outra decisão que parece
+                estranha à primeira vista: por que o Valtron importa as colunas
+                como texto e só depois tenta descobrir se aquilo é número, data,
+                CPF ou outro tipo de dado.
+              </p>
+              </article>
+
+              <article id="post-duckdb-desktop" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Arquitetura</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3>DuckDB dentro de uma aplicação desktop: por que escolhi esse caminho no Valtron</h3>
+                <p>
+                  Quando comecei o Valtron, uma das decisões mais importantes
+                  foi escolher onde os dados ficariam depois da importação.
+                </p>
+                <p>Eu poderia carregar o arquivo e manter tudo em memória.</p>
+                <p>Poderia converter os dados para alguma estrutura própria.</p>
+                <p>
+                  Poderia até exigir que o usuário tivesse PostgreSQL ou outro
+                  banco instalado.
+                </p>
+                <p>Acabei seguindo outro caminho:</p>
+                <blockquote>usar o DuckDB como banco de dados embutido na própria aplicação.</blockquote>
+                <p>Isso resolveu mais problemas do que apenas onde armazenar os dados.</p>
+
+                <h4>O que eu precisava</h4>
+                <p>
+                  O Valtron trabalha com arquivos que podem ter centenas de
+                  milhares de registros.
+                </p>
+                <p>
+                  Depois de importar um XLSX ou CSV, eu precisava conseguir
+                  fazer coisas como:
+                </p>
+                <pre><code>SELECT COUNT(*)
+FROM documento;</code></pre>
+                <p>Filtrar:</p>
+                <pre><code>SELECT *
+FROM documento
+WHERE cidade = 'Salvador';</code></pre>
+                <p>Ordenar:</p>
+                <pre><code>SELECT *
+FROM documento
+ORDER BY nome;</code></pre>
+                <p>Agrupar:</p>
+                <pre><code>SELECT cidade, COUNT(*)
+FROM documento
+GROUP BY cidade;</code></pre>
+                <p>
+                  E, mais recentemente, executar operações de profiling e
+                  qualidade dos dados.
+                </p>
+                <p>
+                  Ou seja, depois da importação, boa parte do problema já se
+                  parecia muito com um problema de banco de dados.
+                </p>
+                <p>Então comecei a me perguntar:</p>
+                <blockquote>Por que construir manualmente algo que um banco já sabe fazer?</blockquote>
+
+                <h4>Mas eu não queria um servidor de banco</h4>
+                <p>Usar PostgreSQL resolveria boa parte dessas necessidades.</p>
+                <p>Só que criaria outras.</p>
+                <p>
+                  Para usar o Valtron, seria necessário ter um servidor
+                  disponível, configurar conexão, usuário, senha, banco, porta e
+                  pensar no ciclo de vida desses dados.
+                </p>
+                <p>Para uma aplicação desktop, eu queria algo mais próximo disso:</p>
+                <pre><code>abre o Valtron
+      ↓
+importa o arquivo
+      ↓
+trabalha com os dados</code></pre>
+                <p>Sem uma etapa:</p>
+                <pre><code>configure seu servidor de banco</code></pre>
+                <p>É aí que o DuckDB encaixou muito bem.</p>
+
+                <h4>DuckDB não precisa de um servidor</h4>
+                <p>O DuckDB é um banco de dados embutido.</p>
+                <p>No Valtron, ele roda dentro da própria aplicação.</p>
+                <p>A arquitetura ficou aproximadamente assim:</p>
+                <pre><code>┌─────────────────────────┐
+│        Valtron          │
+│                         │
+│      TypeScript         │
+│          ↓              │
+│        Tauri            │
+│          ↓              │
+│         Rust            │
+│          ↓              │
+│        DuckDB           │
+│          ↓              │
+│     dados locais        │
+└─────────────────────────┘</code></pre>
+                <p>O frontend não abre uma conexão com um servidor externo.</p>
+                <p>
+                  Ele chama comandos Tauri, o backend Rust executa as operações
+                  e o DuckDB faz boa parte do trabalho relacionado aos dados.
+                </p>
+
+                <h4>O arquivo deixa de ser a estrutura de trabalho</h4>
+                <p>Essa foi uma mudança importante no projeto.</p>
+                <p>
+                  Depois que um XLSX é importado, eu não quero continuar abrindo
+                  e percorrendo aquela planilha toda vez que o usuário fizer
+                  alguma coisa.
+                </p>
+                <p>O fluxo é:</p>
+                <pre><code>arquivo.xlsx
+     ↓
+  importação
+     ↓
+   DuckDB
+     ↓
+ consultas</code></pre>
+                <p>
+                  Cada documento importado recebe uma tabela física própria
+                  dentro do banco local.
+                </p>
+                <p>A partir daí, a fonte de trabalho passa a ser o DuckDB.</p>
+                <p>Isso significa que fazer um filtro não exige abrir novamente o XLSX.</p>
+                <p>Ordenar também não.</p>
+                <p>Executar SQL também não.</p>
+                <p>Fazer profiling também não.</p>
+                <p>O arquivo é a entrada. O banco passa a ser o ambiente de trabalho.</p>
+
+                <h4>Isso ficou ainda mais interessante com a grid virtualizada</h4>
+                <p>
+                  No post anterior falei sobre como a interface do Valtron não
+                  carrega centenas de milhares de linhas de uma vez.
+                </p>
+                <p>Ela pede pequenas janelas.</p>
+                <p>É justamente o DuckDB que consegue responder essas solicitações.</p>
+                <p>Algo conceitualmente parecido com:</p>
+                <pre><code>SELECT nome, cpf, cidade
+FROM documento
+WHERE cidade = 'Salvador'
+ORDER BY nome
+LIMIT 100
+OFFSET 1200;</code></pre>
+                <p>
+                  O frontend não precisa receber o dataset inteiro para
+                  descobrir quais são as linhas 1200 até 1299.
+                </p>
+                <p>O banco faz isso.</p>
+                <p>A interface recebe apenas o resultado necessário naquele momento.</p>
+                <p>Isso criou uma separação que considero importante no Valtron:</p>
+                <pre><code>DuckDB
+sabe trabalhar com o dataset
+
+       ↓
+
+Rust
+coordena as operações
+
+       ↓
+
+Frontend
+sabe apresentar o resultado</code></pre>
+
+                <h4>SQL veio praticamente de graça</h4>
+                <p>
+                  Quando os documentos passaram a existir como tabelas no
+                  DuckDB, apareceu outra possibilidade.
+                </p>
+                <p>
+                  Se já existe um banco SQL por trás do Valtron, por que não
+                  permitir que o usuário consulte os documentos diretamente?
+                </p>
+                <p>Foi assim que entrou o console SQL.</p>
+                <p>
+                  Hoje é possível executar consultas <code>SELECT</code> e CTEs
+                  sobre os documentos importados. O console é somente leitura,
+                  justamente para evitar que uma consulta digitada manualmente
+                  altere silenciosamente os dados.
+                </p>
+                <p>Por exemplo:</p>
+                <pre><code>SELECT
+    cidade,
+    COUNT(*) AS quantidade
+FROM documento
+GROUP BY cidade
+ORDER BY quantidade DESC;</code></pre>
+                <p>Isso adicionou uma característica que eu gosto bastante no projeto.</p>
+                <p>Quem não conhece SQL pode usar a interface.</p>
+                <p>Quem conhece SQL pode ir além dela.</p>
+                <p>Os dois trabalham sobre o mesmo conjunto de dados.</p>
+
+                <h4>Depois veio o Data Profiling</h4>
+                <p>
+                  Quando comecei a implementar análise de colunas, a escolha
+                  pelo DuckDB fez ainda mais sentido.
+                </p>
+                <p>Imagine que eu queira saber sobre uma coluna <code>NOTA</code>:</p>
+                <pre><code>quantos valores existem?
+quantos estão vazios?
+quantos são distintos?
+qual o menor valor?
+qual o maior?
+qual a média?
+como os valores estão distribuídos?</code></pre>
+                <p>Eu poderia buscar 600 mil valores para o Rust e calcular tudo.</p>
+                <p>Mas seria estranho fazer isso tendo um motor analítico logo abaixo.</p>
+                <p>É muito mais interessante executar operações próximas dos dados:</p>
+                <pre><code>604.270 registros
+       ↓
+    DuckDB
+       ↓
+COUNT
+DISTINCT
+MIN
+MAX
+AVG
+GROUP BY
+       ↓
+resultado pequeno
+       ↓
+interface</code></pre>
+                <p>
+                  Em vez de transportar centenas de milhares de valores,
+                  transporto o resultado da análise.
+                </p>
+
+                <h4>O mesmo vale para Data Quality</h4>
+                <p>Considere uma regra:</p>
+                <blockquote>A nota deve estar entre 0 e 10.</blockquote>
+                <p>O frontend não precisa receber todas as notas e executar:</p>
+                <pre><code>if (nota &lt; 0 || nota &gt; 10) {
+    // inválido
+}</code></pre>
+                <p>A ideia é deixar o banco encontrar essas linhas.</p>
+                <p>O mesmo princípio pode ser usado para:</p>
+                <pre><code>valores vazios
+duplicidades
+intervalos numéricos
+comprimento
+valores permitidos
+datas inválidas</code></pre>
+                <p>
+                  O Valtron fica responsável por transformar essas operações em
+                  uma experiência visual.
+                </p>
+                <p>O DuckDB continua fazendo o trabalho pesado.</p>
+
+                <h4>E agora as transformações</h4>
+                <p>
+                  Esse mesmo raciocínio está começando a aparecer na parte de
+                  preparação dos dados.
+                </p>
+                <p>Imagine 600 mil nomes:</p>
+                <pre><code>"  JOÃO SILVA  "
+"MARIA SANTOS "
+" PEDRO SOUZA"</code></pre>
+                <p>Quero remover espaços das extremidades.</p>
+                <p>Uma implementação ingênua poderia fazer:</p>
+                <pre><code>buscar 600 mil registros
+        ↓
+Rust
+        ↓
+loop
+        ↓
+alterar um por um
+        ↓
+DuckDB</code></pre>
+                <p>Mas o banco já sabe fazer:</p>
+                <pre><code>UPDATE documento
+SET nome = TRIM(nome);</code></pre>
+                <p>Essa diferença começa a definir bastante a arquitetura do Valtron.</p>
+                <p>Sempre que possível:</p>
+                <blockquote>levar a operação até os dados, e não os dados até a operação.</blockquote>
+
+                <h4>Local-first acabou virando uma característica do projeto</h4>
+                <p>
+                  Outra consequência dessa escolha é que o Valtron consegue
+                  trabalhar localmente.
+                </p>
+                <p>
+                  O usuário importa o arquivo e os dados permanecem no ambiente
+                  da aplicação.
+                </p>
+                <p>
+                  Não é necessário enviar 600 mil registros para uma API apenas
+                  para executar um filtro ou calcular uma distribuição.
+                </p>
+                <p>
+                  Isso é interessante tanto por simplicidade quanto para
+                  situações em que os dados não deveriam sair da máquina.
+                </p>
+                <p>Não significa que o Valtron nunca terá integrações externas.</p>
+                <p>
+                  PostgreSQL, Parquet, APIs ou outros destinos podem fazer
+                  sentido no futuro.
+                </p>
+                <p>
+                  Mas eles podem ser <strong>integrações</strong>, e não
+                  requisitos para a aplicação funcionar.
+                </p>
+
+                <h4>DuckDB não substitui PostgreSQL</h4>
+                <p>Essa distinção é importante.</p>
+                <p>
+                  Eu não escolheria DuckDB simplesmente porque ele é "melhor"
+                  que PostgreSQL.
+                </p>
+                <p>São problemas diferentes.</p>
+                <p>
+                  Se eu estivesse construindo um sistema transacional com vários
+                  usuários simultaneamente criando e atualizando registros,
+                  PostgreSQL provavelmente faria muito mais sentido.
+                </p>
+                <p>O cenário do Valtron é outro:</p>
+                <pre><code>arquivo grande
+     ↓
+processamento local
+     ↓
+consultas analíticas
+     ↓
+profiling
+     ↓
+qualidade
+     ↓
+transformações</code></pre>
+                <p>
+                  Nesse contexto, um banco analítico embutido combina muito bem
+                  com o problema.
+                </p>
+                <p>
+                  A escolha da tecnologia começa pelo tipo de trabalho que ela
+                  precisa executar.
+                </p>
+
+                <h4>O que mais gostei dessa arquitetura</h4>
+                <p>
+                  Talvez a parte mais interessante seja que o DuckDB não aparece
+                  para quem simplesmente quer abrir uma planilha.
+                </p>
+                <p>A pessoa pode:</p>
+                <pre><code>Importar
+Filtrar
+Ordenar
+Analisar
+Editar
+Exportar</code></pre>
+                <p>sem escrever uma única query.</p>
+                <p>Mas por baixo da interface existe um banco executando SQL.</p>
+                <p>É como se o Valtron tivesse duas formas de trabalhar:</p>
+                <pre><code>              Valtron
+
+        ┌────────┴────────┐
+        │                 │
+   Interface visual      SQL
+        │                 │
+        └────────┬────────┘
+                 │
+              DuckDB
+                 │
+               dados</code></pre>
+                <p>
+                  Essa combinação está permitindo que o projeto cresça sem
+                  precisar reinventar operações fundamentais de processamento de
+                  dados.
+                </p>
+                <p>
+                  No próximo post quero falar sobre uma decisão que parece
+                  contraditória à primeira vista:
+                </p>
+                <blockquote>se o Valtron quer entender os dados, por que ele importa inicialmente as colunas como texto?</blockquote>
+                <p>
+                  A resposta tem mais relação com preservar o dado original do
+                  que com limitações de tipagem.
+                </p>
+              </article>
+            </div>
+
+            <div class="post-list post-next post-index">
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 01</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-origem-valtron">Por que comecei a desenvolver o Valtron</a></h3>
+                <p>Origem do projeto, DuckDB local e a ideia de um data studio desktop.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 02</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-importacao-xlsx">Como carreguei mais de 600 mil registros em poucos segundos</a></h3>
+                <p>Importação direta com DuckDB, métricas e a decisão de remover trabalho duplicado.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 03</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-grid-virtualizada">Importar 600 mil linhas rápido não adianta se a interface travar</a></h3>
+                <p>Virtualização, prefetch, cache limitado e consultas por janela.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 04</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-duckdb-desktop">DuckDB dentro de uma aplicação desktop</a></h3>
+                <p>Banco embutido, local-first, SQL, profiling, quality e transformações.</p>
+              </article>
+            </div>
           </div>
         </div>
       </section>
