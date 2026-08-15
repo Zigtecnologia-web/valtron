@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Importar 600 mil linhas rápido não adianta se a interface travar</title>
+    <title>Importar 600 mil linhas rápido não adianta se a interface travar | Valtron</title>
     <meta name="description" content="Como a grid virtualizada do Valtron usa janelas de dados, prefetch e cache para navegar arquivos grandes sem travar." />
     <link rel="canonical" href="https://zigtecnologia-web.github.io/valtron/posts/grid-virtualizada/" />
     <meta property="og:type" content="article" />
@@ -17,8 +17,1096 @@
     <meta name="twitter:title" content="Importar 600 mil linhas rápido não adianta se a interface travar" />
     <meta name="twitter:description" content="Como a grid virtualizada do Valtron usa janelas de dados, prefetch e cache para navegar arquivos grandes sem travar." />
     <meta name="twitter:image" content="https://zigtecnologia-web.github.io/valtron/images/valtron-interface-compacta.png" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #090d13;
+        --bg-soft: #0e141d;
+        --panel: #121a25;
+        --panel-strong: #172231;
+        --ink: #eef5ff;
+        --muted: #a8b4c5;
+        --muted-strong: #c8d3e1;
+        --line: #243245;
+        --accent: #22c55e;
+        --accent-strong: #86efac;
+        --cyan: #38bdf8;
+        --warning: #f59e0b;
+        --shadow: rgba(0, 0, 0, 0.38);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #0b1119 0%, var(--bg) 46%, #070a0f 100%);
+        color: var(--ink);
+        line-height: 1.55;
+      }
+
+      body.modal-open {
+        overflow: hidden;
+      }
+
+      a {
+        color: var(--accent-strong);
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .shell {
+        width: min(1160px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 1px solid rgba(36, 50, 69, 0.78);
+        background: rgba(9, 13, 19, 0.88);
+        backdrop-filter: blur(18px);
+      }
+
+      .topbar-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 72px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--ink);
+        font-weight: 850;
+        letter-spacing: 0;
+      }
+
+      .brand-mark {
+        width: 40px;
+        height: 40px;
+        border: 1px solid rgba(134, 239, 172, 0.35);
+        border-radius: 8px;
+        background: #102319;
+        object-fit: cover;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 0.95rem;
+      }
+
+      .nav a {
+        color: var(--muted-strong);
+      }
+
+      .hero {
+        padding: 72px 0 58px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(420px, 1.1fr);
+        gap: 38px;
+        align-items: center;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 18px;
+        max-width: 760px;
+        font-size: clamp(2.6rem, 5.2vw, 5.4rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        margin-bottom: 28px;
+        max-width: 650px;
+        color: var(--muted-strong);
+        font-size: clamp(1.08rem, 2vw, 1.28rem);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+      }
+
+      .button.primary {
+        border-color: #16a34a;
+        background: #16a34a;
+        color: #04130a;
+      }
+
+      .proof {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        max-width: 680px;
+      }
+
+      .proof-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(18, 26, 37, 0.78);
+        padding: 14px;
+      }
+
+      .proof-item strong {
+        display: block;
+        color: var(--ink);
+        font-size: 1.05rem;
+      }
+
+      .proof-item span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .hero-shot,
+      .capture {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 24px 70px var(--shadow);
+      }
+
+      .image-button {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: zoom-in;
+        text-align: inherit;
+      }
+
+      .image-button img {
+        display: block;
+        width: 100%;
+        height: auto;
+        transition: transform 180ms ease;
+      }
+
+      .image-button:hover img {
+        transform: scale(1.012);
+      }
+
+      section {
+        padding: 48px 0;
+      }
+
+      .section-heading {
+        max-width: 810px;
+        margin-bottom: 24px;
+      }
+
+      .section-heading h2 {
+        margin-bottom: 10px;
+        font-size: clamp(1.75rem, 3vw, 2.55rem);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .section-heading p {
+        color: var(--muted);
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .feature,
+      .stack-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.72));
+        padding: 20px;
+      }
+
+      .feature h3,
+      .stack-item h3 {
+        margin-bottom: 8px;
+        font-size: 1.04rem;
+      }
+
+      .feature p,
+      .stack-item p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.96rem;
+      }
+
+      .sales-band {
+        border-block: 1px solid var(--line);
+        background: rgba(14, 20, 29, 0.72);
+      }
+
+      .sales-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 26px;
+        align-items: start;
+      }
+
+      .argument-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .argument {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-strong);
+        padding: 18px;
+      }
+
+      .argument strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .argument p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .stack {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .capture-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .blog-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .post-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.74));
+        padding: 20px;
+        scroll-margin-top: 96px;
+      }
+
+      .post-card.featured {
+        min-height: 100%;
+        background:
+          linear-gradient(180deg, rgba(34, 197, 94, 0.12), rgba(18, 26, 37, 0.78)),
+          var(--panel);
+      }
+
+      .post-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      body:not(.single-post-mode) .blog-layout {
+        grid-template-columns: 1fr;
+      }
+
+      body:not(.single-post-mode) .post-feed {
+        display: none;
+      }
+
+      body:not(.single-post-mode) .post-index {
+        position: static;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+
+      .post-feed {
+        display: grid;
+        gap: 18px;
+      }
+
+      .post-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .post-permalink,
+      .blog-all-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: fit-content;
+        min-height: 32px;
+        border: 1px solid rgba(134, 239, 172, 0.28);
+        border-radius: 8px;
+        background: rgba(34, 197, 94, 0.08);
+        color: var(--accent-strong);
+        font-size: 0.8rem;
+        font-weight: 850;
+        padding: 5px 10px;
+      }
+
+      .post-permalink:hover,
+      .blog-all-link:hover {
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+
+      .post-card h3 {
+        margin-bottom: 8px;
+        font-size: clamp(1.2rem, 2vw, 1.7rem);
+        line-height: 1.12;
+      }
+
+      .post-card h4 {
+        margin: 0 0 10px;
+        color: var(--muted-strong);
+        font-size: 1rem;
+        line-height: 1.32;
+      }
+
+      .post-card p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .post-prose {
+        display: grid;
+        gap: 18px;
+      }
+
+      .post-prose h3 {
+        font-size: clamp(1.8rem, 3vw, 2.7rem);
+      }
+
+      .post-prose h4 {
+        margin-top: 8px;
+        color: var(--ink);
+        font-size: 1.14rem;
+      }
+
+      .post-prose blockquote {
+        margin: 0;
+        border-left: 4px solid var(--accent);
+        border-radius: 8px;
+        background: rgba(34, 197, 94, 0.08);
+        color: var(--muted-strong);
+        font-size: 1.04rem;
+        font-weight: 750;
+        padding: 14px 16px;
+      }
+
+      .post-prose pre {
+        margin: 0;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #070b11;
+        color: #dbeafe;
+        padding: 14px 16px;
+      }
+
+      .post-prose code {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.9rem;
+      }
+
+      .post-next {
+        position: sticky;
+        top: 96px;
+      }
+
+      .blog-single-tools {
+        display: none;
+      }
+
+      body.single-post-mode .blog-single-tools {
+        display: block;
+      }
+
+      body.single-post-mode .post-feed > .post-prose:not(:target) {
+        display: none;
+      }
+
+      body.single-post-mode .post-feed > .post-prose:target {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28);
+      }
+
+      .post-index a {
+        color: var(--ink);
+      }
+
+      .post-index .post-card {
+        display: grid;
+        gap: 6px;
+      }
+
+      .caption {
+        margin: 0;
+        padding: 13px 15px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .callout {
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-left: 5px solid var(--warning);
+        border-radius: 8px;
+        background: rgba(245, 158, 11, 0.08);
+        padding: 20px 22px;
+      }
+
+      .callout p:last-child {
+        margin-bottom: 0;
+      }
+
+      .footer {
+        padding: 34px 0 46px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.82);
+      }
+
+      .modal.is-open {
+        display: flex;
+      }
+
+      .modal-panel {
+        position: relative;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        width: min(1280px, 100%);
+        max-height: min(92vh, 900px);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #080c12;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+      }
+
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .modal-title {
+        margin: 0;
+        color: var(--muted-strong);
+        font-size: 0.98rem;
+        font-weight: 700;
+      }
+
+      .modal-figure {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 0;
+        margin: 0;
+        padding: 14px;
+      }
+
+      .modal-figure img {
+        display: block;
+        max-width: 100%;
+        max-height: calc(92vh - 132px);
+        border-radius: 6px;
+      }
+
+      .modal-controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-top: 1px solid var(--line);
+      }
+
+      .icon-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 42px;
+        min-height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 1rem;
+      }
+
+      .icon-button:hover,
+      .button:hover {
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+
+      @media (max-width: 920px) {
+        .topbar-inner {
+          align-items: flex-start;
+          flex-direction: column;
+          justify-content: center;
+          padding: 14px 0;
+        }
+
+        .nav {
+          flex-wrap: wrap;
+        }
+
+        .hero {
+          padding-top: 36px;
+        }
+
+        .hero-grid,
+        .feature-grid,
+        .sales-grid,
+        .stack,
+        .blog-layout,
+        .capture-grid,
+        .proof {
+          grid-template-columns: 1fr;
+        }
+
+        .post-next {
+          position: static;
+        }
+
+        body.single-post-mode .post-index {
+          order: -1;
+        }
+      }
+
+
+      body.post-page .blog-layout {
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+      }
+
+      body.post-page .post-feed {
+        display: grid;
+      }
+
+      body.post-page .post-index {
+        grid-template-columns: 1fr;
+      }
+
+      body.post-page .blog-single-tools {
+        display: block;
+      }
+
+      body.post-page .post-prose {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28);
+      }
+
+      @media (max-width: 920px) {
+        body.post-page .blog-layout {
+          grid-template-columns: 1fr;
+        }
+
+        body.post-page .post-index {
+          order: -1;
+        }
+      }
+    </style>
   </head>
-  <body>
-    <p><a href="../../#post-grid-virtualizada">Abrir postagem</a></p>
+  <body class="post-page">
+    <header class="topbar">
+      <div class="shell topbar-inner">
+        <a class="brand" href="../../">
+          <img class="brand-mark" src="../../images/icon.png" alt="" />
+          <span>Valtron</span>
+        </a>
+        <nav class="nav" aria-label="Navegação principal">
+          <a href="../../#recursos">Recursos</a>
+          <a href="../../#por-que-usar">Por que usar</a>
+          <a href="../../#blog">Blog</a>
+          <a href="../../#interface">Interface</a>
+          <a href="https://github.com/Zigtecnologia-web/valtron#readme">README</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section id="blog" class="sales-band">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Interface</p>
+            <h1>Importar 600 mil linhas rápido não adianta se a interface travar</h1>
+            <p>Como a grid virtualizada do Valtron usa janelas de dados, prefetch e cache para navegar arquivos grandes sem travar.</p>
+          </div>
+
+          <div class="blog-layout">
+            <div class="post-feed">
+              <article id="post-grid-virtualizada" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Interface</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <a class="post-permalink" href="./">Link desta postagem</a>
+                <h3>Importar 600 mil linhas rápido não adianta se a interface travar</h3>
+                <p>
+                Nos primeiros testes do Valtron, boa parte da minha atenção
+                estava no tempo de importação.
+                </p>
+                <p>
+                O objetivo era simples: pegar um XLSX grande, colocar os dados
+                no DuckDB e disponibilizá-los para consulta o mais rápido
+                possível.
+                </p>
+                <p>
+                Depois de alguns experimentos, consegui chegar a poucos segundos
+                para um arquivo com mais de 600 mil registros.
+                </p>
+                <p>Só que isso criou outro problema.</p>
+                <blockquote>O banco conseguia lidar com os dados. A interface também precisava conseguir.</blockquote>
+
+              <h4>O problema mudou de lugar</h4>
+              <p>Imagine um arquivo com:</p>
+              <pre><code>604.270 linhas
+13 colunas</code></pre>
+              <p>Isso representa quase 8 milhões de células.</p>
+              <p>
+                Mesmo que os dados já estejam disponíveis no DuckDB, não faria
+                sentido buscar 604 mil registros e criar milhares ou milhões de
+                elementos HTML para mostrá-los.
+              </p>
+              <p>Seria algo parecido com:</p>
+              <pre><code>DuckDB
+   ↓
+SELECT 600.000 linhas
+   ↓
+Rust
+   ↓
+TypeScript
+   ↓
+DOM
+   ↓
+problema</code></pre>
+              <p>Nesse cenário, eu teria uma importação rápida e uma interface lenta.</p>
+              <p>A otimização só teria mudado o gargalo de lugar.</p>
+
+              <h4>A grid não precisa conhecer o arquivo inteiro</h4>
+              <p>A pergunta que ajudou a resolver isso foi:</p>
+              <blockquote>Se o usuário consegue enxergar apenas algumas linhas na tela, por que carregar 600 mil?</blockquote>
+              <p>A grid do Valtron passou então a trabalhar com <strong>virtualização</strong>.</p>
+              <p>A ideia é relativamente simples.</p>
+              <p>Suponha que o documento tenha:</p>
+              <pre><code>604.270 registros</code></pre>
+              <p>mas naquele momento a tela mostre algo próximo de:</p>
+              <pre><code>20 ou 30 registros</code></pre>
+              <p>Não existe necessidade de renderizar os outros 604 mil.</p>
+              <p>O Valtron trabalha com pequenas janelas dos dados:</p>
+              <pre><code>             604.270 linhas
+                   │
+                   │
+                   ▼
+        ┌─────────────────────┐
+        │       DuckDB        │
+        └──────────┬──────────┘
+                   │
+             busca 100
+                   │
+                   ▼
+        ┌─────────────────────┐
+        │   janela da grid    │
+        │                     │
+        │ linha 1200          │
+        │ linha 1201          │
+        │ linha 1202          │
+        │ ...                 │
+        └─────────────────────┘</code></pre>
+              <p>Atualmente, a grid utiliza lotes de 100 linhas.</p>
+
+              <h4>O scroll passa a determinar quais dados são necessários</h4>
+              <p>
+                Conforme o usuário navega, o frontend calcula qual região da
+                tabela deveria estar visível.
+              </p>
+              <p>Então solicita ao backend apenas aquela janela.</p>
+              <p>
+                O backend possui uma operação específica para isso e retorna os
+                valores das colunas necessárias, além das informações usadas
+                para saber se existe um próximo lote.
+              </p>
+              <p>Conceitualmente:</p>
+              <pre><code>Usuário faz scroll
+       ↓
+Frontend calcula a região
+       ↓
+"Preciso das linhas 1200 até 1299"
+       ↓
+Rust
+       ↓
+DuckDB
+       ↓
+100 registros
+       ↓
+Grid</code></pre>
+              <p>
+                Assim, o tamanho total do documento deixa de determinar
+                diretamente quantos elementos precisam existir na interface.
+              </p>
+
+              <h4>Mas buscar somente quando o usuário chega também não é suficiente</h4>
+              <p>Existe outro detalhe.</p>
+              <p>
+                Se a aplicação esperar o usuário chegar ao final de um lote para
+                só então buscar o próximo, pode aparecer uma pequena pausa
+                durante o scroll.
+              </p>
+              <p>Por isso implementei <strong>prefetch</strong>.</p>
+              <p>
+                Antes de o usuário realmente precisar do próximo conjunto de
+                registros, o Valtron já pode começar a buscá-lo.
+              </p>
+              <p>O comportamento fica aproximadamente assim:</p>
+              <pre><code>Lote atual
+
+0 ───────────────────── 100
+                  ↑
+             usuário
+
+              ↓
+
+Valtron percebe que está
+se aproximando do final
+
+              ↓
+
+busca 100 ───────────── 200</code></pre>
+              <p>
+                Atualmente o prefetch acontece quando a navegação alcança
+                aproximadamente 75% da região configurada.
+              </p>
+              <p>
+                A intenção é simples: quando o usuário chegar aos próximos
+                registros, eles provavelmente já estarão disponíveis.
+              </p>
+
+              <h4>Cache também precisa ter limite</h4>
+              <p>Uma solução fácil seria continuar guardando todos os lotes já carregados.</p>
+              <p>Mas isso recriaria o problema original aos poucos.</p>
+              <p>Depois de navegar bastante:</p>
+              <pre><code>100 linhas
+200
+500
+2.000
+10.000
+50.000
+...</code></pre>
+              <p>
+                a aplicação começaria a acumular dados que o usuário nem está
+                mais vendo.
+              </p>
+              <p>Por isso o cache também possui limite.</p>
+              <p>
+                O Valtron mantém os lotes próximos da região atual e pode
+                descartar os mais distantes.
+              </p>
+              <p>A configuração atual limita o cache a cinco lotes.</p>
+              <p>A ideia é trabalhar com uma janela móvel:</p>
+              <pre><code>descartado
+
+[ lote 1 ]
+
+             cache atual
+
+        [ lote 8 ]
+        [ lote 9 ]
+        [ lote 10 ] ← usuário
+        [ lote 11 ]
+        [ lote 12 ]
+
+                         [ lote 20 ]
+                         ainda nem foi buscado</code></pre>
+              <p>Isso mantém o consumo de memória mais previsível.</p>
+
+              <h4>Overscan ajuda a esconder a virtualização</h4>
+              <p>Existe ainda um pequeno detalhe visual.</p>
+              <p>
+                Se fossem renderizadas somente as linhas exatamente visíveis, um
+                scroll rápido poderia revelar regiões ainda não renderizadas.
+              </p>
+              <p>
+                Por isso existem algumas linhas adicionais antes e depois da
+                região visível.
+              </p>
+              <p>É o chamado <strong>overscan</strong>.</p>
+              <p>No Valtron, atualmente são utilizadas oito linhas de overscan.</p>
+              <p>Para o usuário parece uma tabela normal.</p>
+              <p>
+                Internamente, porém, apenas uma pequena parte dela está realmente
+                sendo renderizada naquele momento.
+              </p>
+
+              <h4>E filtros e ordenação?</h4>
+              <p>Esse foi outro ponto importante.</p>
+              <p>Não faria sentido carregar todo o documento no frontend para depois executar:</p>
+              <pre><code>rows.filter(...)</code></pre>
+              <p>ou:</p>
+              <pre><code>rows.sort(...)</code></pre>
+              <p>Os filtros e a ordenação precisam acontecer próximos dos dados.</p>
+              <p>Então o frontend envia ao backend informações como:</p>
+              <pre><code>offset
+limit
+filtros
+ordenação
+colunas visíveis</code></pre>
+              <p>e o DuckDB executa a consulta correspondente.</p>
+              <p>O resultado volta já preparado para aquela janela.</p>
+              <p>A divisão de responsabilidades fica aproximadamente assim:</p>
+              <pre><code>DUCKDB
+
+filtrar
+ordenar
+paginar
+agregar
+
+      ↓
+
+RUST
+
+orquestrar
+validar
+preparar resposta
+
+      ↓
+
+TYPESCRIPT
+
+virtualizar
+cachear
+renderizar
+interagir</code></pre>
+              <p>Cada camada faz aquilo em que é melhor.</p>
+
+              <h4>Colunas também importam</h4>
+              <p>Outra otimização interessante apareceu depois.</p>
+              <p>
+                Se um documento possui 50 colunas, mas o usuário escolheu
+                visualizar apenas 8, por que transportar as outras 42?
+              </p>
+              <p>
+                O backend da janela virtualizada consegue receber quais colunas
+                estão visíveis e retornar somente os valores necessários para
+                elas.
+              </p>
+              <p>É a mesma ideia aplicada em outra direção:</p>
+              <blockquote>não buscar dados simplesmente porque eles existem.</blockquote>
+              <p>Buscar aquilo que é necessário naquele momento.</p>
+
+              <h4>O que aprendi com essa parte do Valtron</h4>
+              <p>
+                Trabalhar com grandes volumes não é apenas fazer o banco
+                responder rápido.
+              </p>
+              <p>Existe um caminho inteiro:</p>
+              <pre><code>disco
+ ↓
+DuckDB
+ ↓
+Rust
+ ↓
+serialização
+ ↓
+TypeScript
+ ↓
+memória
+ ↓
+DOM
+ ↓
+tela</code></pre>
+              <p>O gargalo pode aparecer em qualquer ponto.</p>
+              <p>
+                No caso do Valtron, a estratégia acabou ficando baseada em uma
+                regra bastante simples:
+              </p>
+              <blockquote>o tamanho do dataset não deveria ser o tamanho do trabalho feito pela interface.</blockquote>
+              <p>
+                Se existem 600 mil linhas no banco e o usuário está olhando 30,
+                a interface deveria trabalhar o máximo possível como se
+                existissem apenas aquelas 30.
+              </p>
+              <p>DuckDB continua sabendo que existem 600 mil.</p>
+              <p>A grid não precisa saber de todas ao mesmo tempo.</p>
+              <p>
+                Foi essa separação que permitiu sair de uma importação rápida
+                para uma navegação que também continua responsiva.
+              </p>
+              <p>
+                No próximo post, quero entrar em outra decisão que parece
+                estranha à primeira vista: por que o Valtron importa as colunas
+                como texto e só depois tenta descobrir se aquilo é número, data,
+                CPF ou outro tipo de dado.
+              </p>
+              </article>
+            </div>
+
+            <div class="post-list post-next post-index">
+              <div class="blog-single-tools">
+                <a class="blog-all-link" href="../../#blog">Ver todas as postagens</a>
+              </div>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 01</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../origem-valtron/">Por que comecei a desenvolver o Valtron</a></h3>
+                <p>Origem do Valtron, DuckDB local, grid virtualizada e a ideia de um data studio desktop para arquivos grandes.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 02</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../importacao-xlsx/">Como carreguei mais de 600 mil registros em poucos segundos</a></h3>
+                <p>Como o Valtron importa XLSX com DuckDB read_xlsx, evita trabalho duplicado e preserva colunas como texto com all_varchar.</p>
+              </article>
+
+              <article class="post-card featured">
+                <div class="post-meta">
+                  <span>Post 03</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../grid-virtualizada/">Importar 600 mil linhas rápido não adianta se a interface travar</a></h3>
+                <p>Como a grid virtualizada do Valtron usa janelas de dados, prefetch e cache para navegar arquivos grandes sem travar.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 04</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../duckdb-desktop/">DuckDB dentro de uma aplicação desktop</a></h3>
+                <p>Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 05</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../importar-como-texto/">Por que o Valtron importa os dados como texto antes de tentar entendê-los</a></h3>
+                <p>Por que preservar colunas como texto ajuda o Valtron a interpretar, validar e transformar dados sem alterar o arquivo cedo demais.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 06</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../data-profiling-600-mil/">Data Profiling: entendendo 600 mil registros sem escrever várias queries</a></h3>
+                <p>Como o Valtron usa DuckDB para gerar estatísticas, inferir tipos prováveis e investigar distribuições em colunas grandes.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 07</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../data-quality/">Data Quality: entender os dados não significa que eles estão corretos</a></h3>
+                <p>Como o Valtron separa profiling de regras explícitas de qualidade, violações, score e investigação dos registros problemáticos.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 08</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../data-preparation/">Data Preparation: corrigindo milhares de registros sem editar célula por célula</a></h3>
+                <p>Preview, transformações em massa no DuckDB, undo por deltas e receitas reutilizáveis para preparação de dados no Valtron.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="shell">
+        Valtron é mantido no repositório
+        <a href="https://github.com/Zigtecnologia-web/valtron">Zigtecnologia-web/valtron</a>.
+      </div>
+    </footer>
   </body>
 </html>

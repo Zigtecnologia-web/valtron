@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DuckDB dentro de uma aplicação desktop</title>
+    <title>DuckDB dentro de uma aplicação desktop | Valtron</title>
     <meta name="description" content="Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados." />
     <link rel="canonical" href="https://zigtecnologia-web.github.io/valtron/posts/duckdb-desktop/" />
     <meta property="og:type" content="article" />
@@ -17,8 +17,1161 @@
     <meta name="twitter:title" content="DuckDB dentro de uma aplicação desktop" />
     <meta name="twitter:description" content="Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados." />
     <meta name="twitter:image" content="https://zigtecnologia-web.github.io/valtron/images/valtron-interface-workspace.png" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #090d13;
+        --bg-soft: #0e141d;
+        --panel: #121a25;
+        --panel-strong: #172231;
+        --ink: #eef5ff;
+        --muted: #a8b4c5;
+        --muted-strong: #c8d3e1;
+        --line: #243245;
+        --accent: #22c55e;
+        --accent-strong: #86efac;
+        --cyan: #38bdf8;
+        --warning: #f59e0b;
+        --shadow: rgba(0, 0, 0, 0.38);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #0b1119 0%, var(--bg) 46%, #070a0f 100%);
+        color: var(--ink);
+        line-height: 1.55;
+      }
+
+      body.modal-open {
+        overflow: hidden;
+      }
+
+      a {
+        color: var(--accent-strong);
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .shell {
+        width: min(1160px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 1px solid rgba(36, 50, 69, 0.78);
+        background: rgba(9, 13, 19, 0.88);
+        backdrop-filter: blur(18px);
+      }
+
+      .topbar-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 72px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--ink);
+        font-weight: 850;
+        letter-spacing: 0;
+      }
+
+      .brand-mark {
+        width: 40px;
+        height: 40px;
+        border: 1px solid rgba(134, 239, 172, 0.35);
+        border-radius: 8px;
+        background: #102319;
+        object-fit: cover;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 0.95rem;
+      }
+
+      .nav a {
+        color: var(--muted-strong);
+      }
+
+      .hero {
+        padding: 72px 0 58px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(420px, 1.1fr);
+        gap: 38px;
+        align-items: center;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 18px;
+        max-width: 760px;
+        font-size: clamp(2.6rem, 5.2vw, 5.4rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        margin-bottom: 28px;
+        max-width: 650px;
+        color: var(--muted-strong);
+        font-size: clamp(1.08rem, 2vw, 1.28rem);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+      }
+
+      .button.primary {
+        border-color: #16a34a;
+        background: #16a34a;
+        color: #04130a;
+      }
+
+      .proof {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        max-width: 680px;
+      }
+
+      .proof-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(18, 26, 37, 0.78);
+        padding: 14px;
+      }
+
+      .proof-item strong {
+        display: block;
+        color: var(--ink);
+        font-size: 1.05rem;
+      }
+
+      .proof-item span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .hero-shot,
+      .capture {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 24px 70px var(--shadow);
+      }
+
+      .image-button {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: zoom-in;
+        text-align: inherit;
+      }
+
+      .image-button img {
+        display: block;
+        width: 100%;
+        height: auto;
+        transition: transform 180ms ease;
+      }
+
+      .image-button:hover img {
+        transform: scale(1.012);
+      }
+
+      section {
+        padding: 48px 0;
+      }
+
+      .section-heading {
+        max-width: 810px;
+        margin-bottom: 24px;
+      }
+
+      .section-heading h2 {
+        margin-bottom: 10px;
+        font-size: clamp(1.75rem, 3vw, 2.55rem);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .section-heading p {
+        color: var(--muted);
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .feature,
+      .stack-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.72));
+        padding: 20px;
+      }
+
+      .feature h3,
+      .stack-item h3 {
+        margin-bottom: 8px;
+        font-size: 1.04rem;
+      }
+
+      .feature p,
+      .stack-item p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.96rem;
+      }
+
+      .sales-band {
+        border-block: 1px solid var(--line);
+        background: rgba(14, 20, 29, 0.72);
+      }
+
+      .sales-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 26px;
+        align-items: start;
+      }
+
+      .argument-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .argument {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-strong);
+        padding: 18px;
+      }
+
+      .argument strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .argument p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .stack {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .capture-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .blog-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .post-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.74));
+        padding: 20px;
+        scroll-margin-top: 96px;
+      }
+
+      .post-card.featured {
+        min-height: 100%;
+        background:
+          linear-gradient(180deg, rgba(34, 197, 94, 0.12), rgba(18, 26, 37, 0.78)),
+          var(--panel);
+      }
+
+      .post-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      body:not(.single-post-mode) .blog-layout {
+        grid-template-columns: 1fr;
+      }
+
+      body:not(.single-post-mode) .post-feed {
+        display: none;
+      }
+
+      body:not(.single-post-mode) .post-index {
+        position: static;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+
+      .post-feed {
+        display: grid;
+        gap: 18px;
+      }
+
+      .post-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .post-permalink,
+      .blog-all-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: fit-content;
+        min-height: 32px;
+        border: 1px solid rgba(134, 239, 172, 0.28);
+        border-radius: 8px;
+        background: rgba(34, 197, 94, 0.08);
+        color: var(--accent-strong);
+        font-size: 0.8rem;
+        font-weight: 850;
+        padding: 5px 10px;
+      }
+
+      .post-permalink:hover,
+      .blog-all-link:hover {
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+
+      .post-card h3 {
+        margin-bottom: 8px;
+        font-size: clamp(1.2rem, 2vw, 1.7rem);
+        line-height: 1.12;
+      }
+
+      .post-card h4 {
+        margin: 0 0 10px;
+        color: var(--muted-strong);
+        font-size: 1rem;
+        line-height: 1.32;
+      }
+
+      .post-card p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .post-prose {
+        display: grid;
+        gap: 18px;
+      }
+
+      .post-prose h3 {
+        font-size: clamp(1.8rem, 3vw, 2.7rem);
+      }
+
+      .post-prose h4 {
+        margin-top: 8px;
+        color: var(--ink);
+        font-size: 1.14rem;
+      }
+
+      .post-prose blockquote {
+        margin: 0;
+        border-left: 4px solid var(--accent);
+        border-radius: 8px;
+        background: rgba(34, 197, 94, 0.08);
+        color: var(--muted-strong);
+        font-size: 1.04rem;
+        font-weight: 750;
+        padding: 14px 16px;
+      }
+
+      .post-prose pre {
+        margin: 0;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #070b11;
+        color: #dbeafe;
+        padding: 14px 16px;
+      }
+
+      .post-prose code {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.9rem;
+      }
+
+      .post-next {
+        position: sticky;
+        top: 96px;
+      }
+
+      .blog-single-tools {
+        display: none;
+      }
+
+      body.single-post-mode .blog-single-tools {
+        display: block;
+      }
+
+      body.single-post-mode .post-feed > .post-prose:not(:target) {
+        display: none;
+      }
+
+      body.single-post-mode .post-feed > .post-prose:target {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28);
+      }
+
+      .post-index a {
+        color: var(--ink);
+      }
+
+      .post-index .post-card {
+        display: grid;
+        gap: 6px;
+      }
+
+      .caption {
+        margin: 0;
+        padding: 13px 15px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .callout {
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-left: 5px solid var(--warning);
+        border-radius: 8px;
+        background: rgba(245, 158, 11, 0.08);
+        padding: 20px 22px;
+      }
+
+      .callout p:last-child {
+        margin-bottom: 0;
+      }
+
+      .footer {
+        padding: 34px 0 46px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.82);
+      }
+
+      .modal.is-open {
+        display: flex;
+      }
+
+      .modal-panel {
+        position: relative;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        width: min(1280px, 100%);
+        max-height: min(92vh, 900px);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #080c12;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+      }
+
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .modal-title {
+        margin: 0;
+        color: var(--muted-strong);
+        font-size: 0.98rem;
+        font-weight: 700;
+      }
+
+      .modal-figure {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 0;
+        margin: 0;
+        padding: 14px;
+      }
+
+      .modal-figure img {
+        display: block;
+        max-width: 100%;
+        max-height: calc(92vh - 132px);
+        border-radius: 6px;
+      }
+
+      .modal-controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-top: 1px solid var(--line);
+      }
+
+      .icon-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 42px;
+        min-height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 1rem;
+      }
+
+      .icon-button:hover,
+      .button:hover {
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+
+      @media (max-width: 920px) {
+        .topbar-inner {
+          align-items: flex-start;
+          flex-direction: column;
+          justify-content: center;
+          padding: 14px 0;
+        }
+
+        .nav {
+          flex-wrap: wrap;
+        }
+
+        .hero {
+          padding-top: 36px;
+        }
+
+        .hero-grid,
+        .feature-grid,
+        .sales-grid,
+        .stack,
+        .blog-layout,
+        .capture-grid,
+        .proof {
+          grid-template-columns: 1fr;
+        }
+
+        .post-next {
+          position: static;
+        }
+
+        body.single-post-mode .post-index {
+          order: -1;
+        }
+      }
+
+
+      body.post-page .blog-layout {
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+      }
+
+      body.post-page .post-feed {
+        display: grid;
+      }
+
+      body.post-page .post-index {
+        grid-template-columns: 1fr;
+      }
+
+      body.post-page .blog-single-tools {
+        display: block;
+      }
+
+      body.post-page .post-prose {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28);
+      }
+
+      @media (max-width: 920px) {
+        body.post-page .blog-layout {
+          grid-template-columns: 1fr;
+        }
+
+        body.post-page .post-index {
+          order: -1;
+        }
+      }
+    </style>
   </head>
-  <body>
-    <p><a href="../../#post-duckdb-desktop">Abrir postagem</a></p>
+  <body class="post-page">
+    <header class="topbar">
+      <div class="shell topbar-inner">
+        <a class="brand" href="../../">
+          <img class="brand-mark" src="../../images/icon.png" alt="" />
+          <span>Valtron</span>
+        </a>
+        <nav class="nav" aria-label="Navegação principal">
+          <a href="../../#recursos">Recursos</a>
+          <a href="../../#por-que-usar">Por que usar</a>
+          <a href="../../#blog">Blog</a>
+          <a href="../../#interface">Interface</a>
+          <a href="https://github.com/Zigtecnologia-web/valtron#readme">README</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section id="blog" class="sales-band">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Arquitetura</p>
+            <h1>DuckDB dentro de uma aplicação desktop</h1>
+            <p>Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados.</p>
+          </div>
+
+          <div class="blog-layout">
+            <div class="post-feed">
+              <article id="post-duckdb-desktop" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Arquitetura</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <a class="post-permalink" href="./">Link desta postagem</a>
+                <h3>DuckDB dentro de uma aplicação desktop: por que escolhi esse caminho no Valtron</h3>
+                <p>
+                  Quando comecei o Valtron, uma das decisões mais importantes
+                  foi escolher onde os dados ficariam depois da importação.
+                </p>
+                <p>Eu poderia carregar o arquivo e manter tudo em memória.</p>
+                <p>Poderia converter os dados para alguma estrutura própria.</p>
+                <p>
+                  Poderia até exigir que o usuário tivesse PostgreSQL ou outro
+                  banco instalado.
+                </p>
+                <p>Acabei seguindo outro caminho:</p>
+                <blockquote>usar o DuckDB como banco de dados embutido na própria aplicação.</blockquote>
+                <p>Isso resolveu mais problemas do que apenas onde armazenar os dados.</p>
+
+                <h4>O que eu precisava</h4>
+                <p>
+                  O Valtron trabalha com arquivos que podem ter centenas de
+                  milhares de registros.
+                </p>
+                <p>
+                  Depois de importar um XLSX ou CSV, eu precisava conseguir
+                  fazer coisas como:
+                </p>
+                <pre><code>SELECT COUNT(*)
+FROM documento;</code></pre>
+                <p>Filtrar:</p>
+                <pre><code>SELECT *
+FROM documento
+WHERE cidade = 'Salvador';</code></pre>
+                <p>Ordenar:</p>
+                <pre><code>SELECT *
+FROM documento
+ORDER BY nome;</code></pre>
+                <p>Agrupar:</p>
+                <pre><code>SELECT cidade, COUNT(*)
+FROM documento
+GROUP BY cidade;</code></pre>
+                <p>
+                  E, mais recentemente, executar operações de profiling e
+                  qualidade dos dados.
+                </p>
+                <p>
+                  Ou seja, depois da importação, boa parte do problema já se
+                  parecia muito com um problema de banco de dados.
+                </p>
+                <p>Então comecei a me perguntar:</p>
+                <blockquote>Por que construir manualmente algo que um banco já sabe fazer?</blockquote>
+
+                <h4>Mas eu não queria um servidor de banco</h4>
+                <p>Usar PostgreSQL resolveria boa parte dessas necessidades.</p>
+                <p>Só que criaria outras.</p>
+                <p>
+                  Para usar o Valtron, seria necessário ter um servidor
+                  disponível, configurar conexão, usuário, senha, banco, porta e
+                  pensar no ciclo de vida desses dados.
+                </p>
+                <p>Para uma aplicação desktop, eu queria algo mais próximo disso:</p>
+                <pre><code>abre o Valtron
+      ↓
+importa o arquivo
+      ↓
+trabalha com os dados</code></pre>
+                <p>Sem uma etapa:</p>
+                <pre><code>configure seu servidor de banco</code></pre>
+                <p>É aí que o DuckDB encaixou muito bem.</p>
+
+                <h4>DuckDB não precisa de um servidor</h4>
+                <p>O DuckDB é um banco de dados embutido.</p>
+                <p>No Valtron, ele roda dentro da própria aplicação.</p>
+                <p>A arquitetura ficou aproximadamente assim:</p>
+                <pre><code>┌─────────────────────────┐
+│        Valtron          │
+│                         │
+│      TypeScript         │
+│          ↓              │
+│        Tauri            │
+│          ↓              │
+│         Rust            │
+│          ↓              │
+│        DuckDB           │
+│          ↓              │
+│     dados locais        │
+└─────────────────────────┘</code></pre>
+                <p>O frontend não abre uma conexão com um servidor externo.</p>
+                <p>
+                  Ele chama comandos Tauri, o backend Rust executa as operações
+                  e o DuckDB faz boa parte do trabalho relacionado aos dados.
+                </p>
+
+                <h4>O arquivo deixa de ser a estrutura de trabalho</h4>
+                <p>Essa foi uma mudança importante no projeto.</p>
+                <p>
+                  Depois que um XLSX é importado, eu não quero continuar abrindo
+                  e percorrendo aquela planilha toda vez que o usuário fizer
+                  alguma coisa.
+                </p>
+                <p>O fluxo é:</p>
+                <pre><code>arquivo.xlsx
+     ↓
+  importação
+     ↓
+   DuckDB
+     ↓
+ consultas</code></pre>
+                <p>
+                  Cada documento importado recebe uma tabela física própria
+                  dentro do banco local.
+                </p>
+                <p>A partir daí, a fonte de trabalho passa a ser o DuckDB.</p>
+                <p>Isso significa que fazer um filtro não exige abrir novamente o XLSX.</p>
+                <p>Ordenar também não.</p>
+                <p>Executar SQL também não.</p>
+                <p>Fazer profiling também não.</p>
+                <p>O arquivo é a entrada. O banco passa a ser o ambiente de trabalho.</p>
+
+                <h4>Isso ficou ainda mais interessante com a grid virtualizada</h4>
+                <p>
+                  No post anterior falei sobre como a interface do Valtron não
+                  carrega centenas de milhares de linhas de uma vez.
+                </p>
+                <p>Ela pede pequenas janelas.</p>
+                <p>É justamente o DuckDB que consegue responder essas solicitações.</p>
+                <p>Algo conceitualmente parecido com:</p>
+                <pre><code>SELECT nome, cpf, cidade
+FROM documento
+WHERE cidade = 'Salvador'
+ORDER BY nome
+LIMIT 100
+OFFSET 1200;</code></pre>
+                <p>
+                  O frontend não precisa receber o dataset inteiro para
+                  descobrir quais são as linhas 1200 até 1299.
+                </p>
+                <p>O banco faz isso.</p>
+                <p>A interface recebe apenas o resultado necessário naquele momento.</p>
+                <p>Isso criou uma separação que considero importante no Valtron:</p>
+                <pre><code>DuckDB
+sabe trabalhar com o dataset
+
+       ↓
+
+Rust
+coordena as operações
+
+       ↓
+
+Frontend
+sabe apresentar o resultado</code></pre>
+
+                <h4>SQL veio praticamente de graça</h4>
+                <p>
+                  Quando os documentos passaram a existir como tabelas no
+                  DuckDB, apareceu outra possibilidade.
+                </p>
+                <p>
+                  Se já existe um banco SQL por trás do Valtron, por que não
+                  permitir que o usuário consulte os documentos diretamente?
+                </p>
+                <p>Foi assim que entrou o console SQL.</p>
+                <p>
+                  Hoje é possível executar consultas <code>SELECT</code> e CTEs
+                  sobre os documentos importados. O console é somente leitura,
+                  justamente para evitar que uma consulta digitada manualmente
+                  altere silenciosamente os dados.
+                </p>
+                <p>Por exemplo:</p>
+                <pre><code>SELECT
+    cidade,
+    COUNT(*) AS quantidade
+FROM documento
+GROUP BY cidade
+ORDER BY quantidade DESC;</code></pre>
+                <p>Isso adicionou uma característica que eu gosto bastante no projeto.</p>
+                <p>Quem não conhece SQL pode usar a interface.</p>
+                <p>Quem conhece SQL pode ir além dela.</p>
+                <p>Os dois trabalham sobre o mesmo conjunto de dados.</p>
+
+                <h4>Depois veio o Data Profiling</h4>
+                <p>
+                  Quando comecei a implementar análise de colunas, a escolha
+                  pelo DuckDB fez ainda mais sentido.
+                </p>
+                <p>Imagine que eu queira saber sobre uma coluna <code>NOTA</code>:</p>
+                <pre><code>quantos valores existem?
+quantos estão vazios?
+quantos são distintos?
+qual o menor valor?
+qual o maior?
+qual a média?
+como os valores estão distribuídos?</code></pre>
+                <p>Eu poderia buscar 600 mil valores para o Rust e calcular tudo.</p>
+                <p>Mas seria estranho fazer isso tendo um motor analítico logo abaixo.</p>
+                <p>É muito mais interessante executar operações próximas dos dados:</p>
+                <pre><code>604.270 registros
+       ↓
+    DuckDB
+       ↓
+COUNT
+DISTINCT
+MIN
+MAX
+AVG
+GROUP BY
+       ↓
+resultado pequeno
+       ↓
+interface</code></pre>
+                <p>
+                  Em vez de transportar centenas de milhares de valores,
+                  transporto o resultado da análise.
+                </p>
+
+                <h4>O mesmo vale para Data Quality</h4>
+                <p>Considere uma regra:</p>
+                <blockquote>A nota deve estar entre 0 e 10.</blockquote>
+                <p>O frontend não precisa receber todas as notas e executar:</p>
+                <pre><code>if (nota &lt; 0 || nota &gt; 10) {
+    // inválido
+}</code></pre>
+                <p>A ideia é deixar o banco encontrar essas linhas.</p>
+                <p>O mesmo princípio pode ser usado para:</p>
+                <pre><code>valores vazios
+duplicidades
+intervalos numéricos
+comprimento
+valores permitidos
+datas inválidas</code></pre>
+                <p>
+                  O Valtron fica responsável por transformar essas operações em
+                  uma experiência visual.
+                </p>
+                <p>O DuckDB continua fazendo o trabalho pesado.</p>
+
+                <h4>E agora as transformações</h4>
+                <p>
+                  Esse mesmo raciocínio está começando a aparecer na parte de
+                  preparação dos dados.
+                </p>
+                <p>Imagine 600 mil nomes:</p>
+                <pre><code>"  JOÃO SILVA  "
+"MARIA SANTOS "
+" PEDRO SOUZA"</code></pre>
+                <p>Quero remover espaços das extremidades.</p>
+                <p>Uma implementação ingênua poderia fazer:</p>
+                <pre><code>buscar 600 mil registros
+        ↓
+Rust
+        ↓
+loop
+        ↓
+alterar um por um
+        ↓
+DuckDB</code></pre>
+                <p>Mas o banco já sabe fazer:</p>
+                <pre><code>UPDATE documento
+SET nome = TRIM(nome);</code></pre>
+                <p>Essa diferença começa a definir bastante a arquitetura do Valtron.</p>
+                <p>Sempre que possível:</p>
+                <blockquote>levar a operação até os dados, e não os dados até a operação.</blockquote>
+
+                <h4>Local-first acabou virando uma característica do projeto</h4>
+                <p>
+                  Outra consequência dessa escolha é que o Valtron consegue
+                  trabalhar localmente.
+                </p>
+                <p>
+                  O usuário importa o arquivo e os dados permanecem no ambiente
+                  da aplicação.
+                </p>
+                <p>
+                  Não é necessário enviar 600 mil registros para uma API apenas
+                  para executar um filtro ou calcular uma distribuição.
+                </p>
+                <p>
+                  Isso é interessante tanto por simplicidade quanto para
+                  situações em que os dados não deveriam sair da máquina.
+                </p>
+                <p>Não significa que o Valtron nunca terá integrações externas.</p>
+                <p>
+                  PostgreSQL, Parquet, APIs ou outros destinos podem fazer
+                  sentido no futuro.
+                </p>
+                <p>
+                  Mas eles podem ser <strong>integrações</strong>, e não
+                  requisitos para a aplicação funcionar.
+                </p>
+
+                <h4>DuckDB não substitui PostgreSQL</h4>
+                <p>Essa distinção é importante.</p>
+                <p>
+                  Eu não escolheria DuckDB simplesmente porque ele é "melhor"
+                  que PostgreSQL.
+                </p>
+                <p>São problemas diferentes.</p>
+                <p>
+                  Se eu estivesse construindo um sistema transacional com vários
+                  usuários simultaneamente criando e atualizando registros,
+                  PostgreSQL provavelmente faria muito mais sentido.
+                </p>
+                <p>O cenário do Valtron é outro:</p>
+                <pre><code>arquivo grande
+     ↓
+processamento local
+     ↓
+consultas analíticas
+     ↓
+profiling
+     ↓
+qualidade
+     ↓
+transformações</code></pre>
+                <p>
+                  Nesse contexto, um banco analítico embutido combina muito bem
+                  com o problema.
+                </p>
+                <p>
+                  A escolha da tecnologia começa pelo tipo de trabalho que ela
+                  precisa executar.
+                </p>
+
+                <h4>O que mais gostei dessa arquitetura</h4>
+                <p>
+                  Talvez a parte mais interessante seja que o DuckDB não aparece
+                  para quem simplesmente quer abrir uma planilha.
+                </p>
+                <p>A pessoa pode:</p>
+                <pre><code>Importar
+Filtrar
+Ordenar
+Analisar
+Editar
+Exportar</code></pre>
+                <p>sem escrever uma única query.</p>
+                <p>Mas por baixo da interface existe um banco executando SQL.</p>
+                <p>É como se o Valtron tivesse duas formas de trabalhar:</p>
+                <pre><code>              Valtron
+
+        ┌────────┴────────┐
+        │                 │
+   Interface visual      SQL
+        │                 │
+        └────────┬────────┘
+                 │
+              DuckDB
+                 │
+               dados</code></pre>
+                <p>
+                  Essa combinação está permitindo que o projeto cresça sem
+                  precisar reinventar operações fundamentais de processamento de
+                  dados.
+                </p>
+                <p>
+                  No próximo post quero falar sobre uma decisão que parece
+                  contraditória à primeira vista:
+                </p>
+                <blockquote>se o Valtron quer entender os dados, por que ele importa inicialmente as colunas como texto?</blockquote>
+                <p>
+                  A resposta tem mais relação com preservar o dado original do
+                  que com limitações de tipagem.
+                </p>
+              </article>
+            </div>
+
+            <div class="post-list post-next post-index">
+              <div class="blog-single-tools">
+                <a class="blog-all-link" href="../../#blog">Ver todas as postagens</a>
+              </div>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 01</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../origem-valtron/">Por que comecei a desenvolver o Valtron</a></h3>
+                <p>Origem do Valtron, DuckDB local, grid virtualizada e a ideia de um data studio desktop para arquivos grandes.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 02</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../importacao-xlsx/">Como carreguei mais de 600 mil registros em poucos segundos</a></h3>
+                <p>Como o Valtron importa XLSX com DuckDB read_xlsx, evita trabalho duplicado e preserva colunas como texto com all_varchar.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 03</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../grid-virtualizada/">Importar 600 mil linhas rápido não adianta se a interface travar</a></h3>
+                <p>Como a grid virtualizada do Valtron usa janelas de dados, prefetch e cache para navegar arquivos grandes sem travar.</p>
+              </article>
+
+              <article class="post-card featured">
+                <div class="post-meta">
+                  <span>Post 04</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../duckdb-desktop/">DuckDB dentro de uma aplicação desktop</a></h3>
+                <p>Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 05</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../importar-como-texto/">Por que o Valtron importa os dados como texto antes de tentar entendê-los</a></h3>
+                <p>Por que preservar colunas como texto ajuda o Valtron a interpretar, validar e transformar dados sem alterar o arquivo cedo demais.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 06</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../data-profiling-600-mil/">Data Profiling: entendendo 600 mil registros sem escrever várias queries</a></h3>
+                <p>Como o Valtron usa DuckDB para gerar estatísticas, inferir tipos prováveis e investigar distribuições em colunas grandes.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 07</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../data-quality/">Data Quality: entender os dados não significa que eles estão corretos</a></h3>
+                <p>Como o Valtron separa profiling de regras explícitas de qualidade, violações, score e investigação dos registros problemáticos.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 08</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../data-preparation/">Data Preparation: corrigindo milhares de registros sem editar célula por célula</a></h3>
+                <p>Preview, transformações em massa no DuckDB, undo por deltas e receitas reutilizáveis para preparação de dados no Valtron.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="shell">
+        Valtron é mantido no repositório
+        <a href="https://github.com/Zigtecnologia-web/valtron">Zigtecnologia-web/valtron</a>.
+      </div>
+    </footer>
   </body>
 </html>

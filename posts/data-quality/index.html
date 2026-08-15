@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Data Quality: entender os dados não significa que eles estão corretos</title>
+    <title>Data Quality: entender os dados não significa que eles estão corretos | Valtron</title>
     <meta name="description" content="Como o Valtron separa profiling de regras explícitas de qualidade, violações, score e investigação dos registros problemáticos." />
     <link rel="canonical" href="https://zigtecnologia-web.github.io/valtron/posts/data-quality/" />
     <meta property="og:type" content="article" />
@@ -17,8 +17,1205 @@
     <meta name="twitter:title" content="Data Quality: entender os dados não significa que eles estão corretos" />
     <meta name="twitter:description" content="Como o Valtron separa profiling de regras explícitas de qualidade, violações, score e investigação dos registros problemáticos." />
     <meta name="twitter:image" content="https://zigtecnologia-web.github.io/valtron/images/valtron-interface-workspace.png" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #090d13;
+        --bg-soft: #0e141d;
+        --panel: #121a25;
+        --panel-strong: #172231;
+        --ink: #eef5ff;
+        --muted: #a8b4c5;
+        --muted-strong: #c8d3e1;
+        --line: #243245;
+        --accent: #22c55e;
+        --accent-strong: #86efac;
+        --cyan: #38bdf8;
+        --warning: #f59e0b;
+        --shadow: rgba(0, 0, 0, 0.38);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #0b1119 0%, var(--bg) 46%, #070a0f 100%);
+        color: var(--ink);
+        line-height: 1.55;
+      }
+
+      body.modal-open {
+        overflow: hidden;
+      }
+
+      a {
+        color: var(--accent-strong);
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .shell {
+        width: min(1160px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 1px solid rgba(36, 50, 69, 0.78);
+        background: rgba(9, 13, 19, 0.88);
+        backdrop-filter: blur(18px);
+      }
+
+      .topbar-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 72px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--ink);
+        font-weight: 850;
+        letter-spacing: 0;
+      }
+
+      .brand-mark {
+        width: 40px;
+        height: 40px;
+        border: 1px solid rgba(134, 239, 172, 0.35);
+        border-radius: 8px;
+        background: #102319;
+        object-fit: cover;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 0.95rem;
+      }
+
+      .nav a {
+        color: var(--muted-strong);
+      }
+
+      .hero {
+        padding: 72px 0 58px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(420px, 1.1fr);
+        gap: 38px;
+        align-items: center;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 18px;
+        max-width: 760px;
+        font-size: clamp(2.6rem, 5.2vw, 5.4rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        margin-bottom: 28px;
+        max-width: 650px;
+        color: var(--muted-strong);
+        font-size: clamp(1.08rem, 2vw, 1.28rem);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+      }
+
+      .button.primary {
+        border-color: #16a34a;
+        background: #16a34a;
+        color: #04130a;
+      }
+
+      .proof {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        max-width: 680px;
+      }
+
+      .proof-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(18, 26, 37, 0.78);
+        padding: 14px;
+      }
+
+      .proof-item strong {
+        display: block;
+        color: var(--ink);
+        font-size: 1.05rem;
+      }
+
+      .proof-item span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .hero-shot,
+      .capture {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 24px 70px var(--shadow);
+      }
+
+      .image-button {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: zoom-in;
+        text-align: inherit;
+      }
+
+      .image-button img {
+        display: block;
+        width: 100%;
+        height: auto;
+        transition: transform 180ms ease;
+      }
+
+      .image-button:hover img {
+        transform: scale(1.012);
+      }
+
+      section {
+        padding: 48px 0;
+      }
+
+      .section-heading {
+        max-width: 810px;
+        margin-bottom: 24px;
+      }
+
+      .section-heading h2 {
+        margin-bottom: 10px;
+        font-size: clamp(1.75rem, 3vw, 2.55rem);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .section-heading p {
+        color: var(--muted);
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .feature,
+      .stack-item {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.72));
+        padding: 20px;
+      }
+
+      .feature h3,
+      .stack-item h3 {
+        margin-bottom: 8px;
+        font-size: 1.04rem;
+      }
+
+      .feature p,
+      .stack-item p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.96rem;
+      }
+
+      .sales-band {
+        border-block: 1px solid var(--line);
+        background: rgba(14, 20, 29, 0.72);
+      }
+
+      .sales-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 26px;
+        align-items: start;
+      }
+
+      .argument-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .argument {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-strong);
+        padding: 18px;
+      }
+
+      .argument strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .argument p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .stack {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .capture-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .blog-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .post-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.74));
+        padding: 20px;
+        scroll-margin-top: 96px;
+      }
+
+      .post-card.featured {
+        min-height: 100%;
+        background:
+          linear-gradient(180deg, rgba(34, 197, 94, 0.12), rgba(18, 26, 37, 0.78)),
+          var(--panel);
+      }
+
+      .post-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      body:not(.single-post-mode) .blog-layout {
+        grid-template-columns: 1fr;
+      }
+
+      body:not(.single-post-mode) .post-feed {
+        display: none;
+      }
+
+      body:not(.single-post-mode) .post-index {
+        position: static;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+
+      .post-feed {
+        display: grid;
+        gap: 18px;
+      }
+
+      .post-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .post-permalink,
+      .blog-all-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: fit-content;
+        min-height: 32px;
+        border: 1px solid rgba(134, 239, 172, 0.28);
+        border-radius: 8px;
+        background: rgba(34, 197, 94, 0.08);
+        color: var(--accent-strong);
+        font-size: 0.8rem;
+        font-weight: 850;
+        padding: 5px 10px;
+      }
+
+      .post-permalink:hover,
+      .blog-all-link:hover {
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+
+      .post-card h3 {
+        margin-bottom: 8px;
+        font-size: clamp(1.2rem, 2vw, 1.7rem);
+        line-height: 1.12;
+      }
+
+      .post-card h4 {
+        margin: 0 0 10px;
+        color: var(--muted-strong);
+        font-size: 1rem;
+        line-height: 1.32;
+      }
+
+      .post-card p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .post-prose {
+        display: grid;
+        gap: 18px;
+      }
+
+      .post-prose h3 {
+        font-size: clamp(1.8rem, 3vw, 2.7rem);
+      }
+
+      .post-prose h4 {
+        margin-top: 8px;
+        color: var(--ink);
+        font-size: 1.14rem;
+      }
+
+      .post-prose blockquote {
+        margin: 0;
+        border-left: 4px solid var(--accent);
+        border-radius: 8px;
+        background: rgba(34, 197, 94, 0.08);
+        color: var(--muted-strong);
+        font-size: 1.04rem;
+        font-weight: 750;
+        padding: 14px 16px;
+      }
+
+      .post-prose pre {
+        margin: 0;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #070b11;
+        color: #dbeafe;
+        padding: 14px 16px;
+      }
+
+      .post-prose code {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.9rem;
+      }
+
+      .post-next {
+        position: sticky;
+        top: 96px;
+      }
+
+      .blog-single-tools {
+        display: none;
+      }
+
+      body.single-post-mode .blog-single-tools {
+        display: block;
+      }
+
+      body.single-post-mode .post-feed > .post-prose:not(:target) {
+        display: none;
+      }
+
+      body.single-post-mode .post-feed > .post-prose:target {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28);
+      }
+
+      .post-index a {
+        color: var(--ink);
+      }
+
+      .post-index .post-card {
+        display: grid;
+        gap: 6px;
+      }
+
+      .caption {
+        margin: 0;
+        padding: 13px 15px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .callout {
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-left: 5px solid var(--warning);
+        border-radius: 8px;
+        background: rgba(245, 158, 11, 0.08);
+        padding: 20px 22px;
+      }
+
+      .callout p:last-child {
+        margin-bottom: 0;
+      }
+
+      .footer {
+        padding: 34px 0 46px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.82);
+      }
+
+      .modal.is-open {
+        display: flex;
+      }
+
+      .modal-panel {
+        position: relative;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        width: min(1280px, 100%);
+        max-height: min(92vh, 900px);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #080c12;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+      }
+
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .modal-title {
+        margin: 0;
+        color: var(--muted-strong);
+        font-size: 0.98rem;
+        font-weight: 700;
+      }
+
+      .modal-figure {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 0;
+        margin: 0;
+        padding: 14px;
+      }
+
+      .modal-figure img {
+        display: block;
+        max-width: 100%;
+        max-height: calc(92vh - 132px);
+        border-radius: 6px;
+      }
+
+      .modal-controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-top: 1px solid var(--line);
+      }
+
+      .icon-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 42px;
+        min-height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        cursor: pointer;
+        font-size: 1rem;
+      }
+
+      .icon-button:hover,
+      .button:hover {
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+
+      @media (max-width: 920px) {
+        .topbar-inner {
+          align-items: flex-start;
+          flex-direction: column;
+          justify-content: center;
+          padding: 14px 0;
+        }
+
+        .nav {
+          flex-wrap: wrap;
+        }
+
+        .hero {
+          padding-top: 36px;
+        }
+
+        .hero-grid,
+        .feature-grid,
+        .sales-grid,
+        .stack,
+        .blog-layout,
+        .capture-grid,
+        .proof {
+          grid-template-columns: 1fr;
+        }
+
+        .post-next {
+          position: static;
+        }
+
+        body.single-post-mode .post-index {
+          order: -1;
+        }
+      }
+
+
+      body.post-page .blog-layout {
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+      }
+
+      body.post-page .post-feed {
+        display: grid;
+      }
+
+      body.post-page .post-index {
+        grid-template-columns: 1fr;
+      }
+
+      body.post-page .blog-single-tools {
+        display: block;
+      }
+
+      body.post-page .post-prose {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28);
+      }
+
+      @media (max-width: 920px) {
+        body.post-page .blog-layout {
+          grid-template-columns: 1fr;
+        }
+
+        body.post-page .post-index {
+          order: -1;
+        }
+      }
+    </style>
   </head>
-  <body>
-    <p><a href="../../#post-data-quality">Abrir postagem</a></p>
+  <body class="post-page">
+    <header class="topbar">
+      <div class="shell topbar-inner">
+        <a class="brand" href="../../">
+          <img class="brand-mark" src="../../images/icon.png" alt="" />
+          <span>Valtron</span>
+        </a>
+        <nav class="nav" aria-label="Navegação principal">
+          <a href="../../#recursos">Recursos</a>
+          <a href="../../#por-que-usar">Por que usar</a>
+          <a href="../../#blog">Blog</a>
+          <a href="../../#interface">Interface</a>
+          <a href="https://github.com/Zigtecnologia-web/valtron#readme">README</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section id="blog" class="sales-band">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Data Quality</p>
+            <h1>Data Quality: entender os dados não significa que eles estão corretos</h1>
+            <p>Como o Valtron separa profiling de regras explícitas de qualidade, violações, score e investigação dos registros problemáticos.</p>
+          </div>
+
+          <div class="blog-layout">
+            <div class="post-feed">
+              <article id="post-data-quality" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Data Quality</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <a class="post-permalink" href="./">Link desta postagem</a>
+                <h3>Data Quality: entender os dados não significa que eles estão corretos</h3>
+                <p>
+                  No último post falei sobre Data Profiling e como comecei a
+                  usar o DuckDB para entender melhor as colunas importadas pelo
+                  Valtron.
+                </p>
+                <p>O profiling consegue responder perguntas como:</p>
+                <pre><code>Quantos valores estão vazios?
+Quantos são distintos?
+Qual é o tamanho dos valores?
+Quais aparecem com mais frequência?
+A coluna parece numérica?
+Parece uma data?</code></pre>
+                <p>
+                  Só que, depois de implementar isso, apareceu uma diferença
+                  importante.
+                </p>
+                <p>
+                  <strong>Entender o que existe nos dados não significa saber se
+                  os dados estão corretos.</strong>
+                </p>
+                <p>É aí que entra Data Quality.</p>
+
+                <h4>Uma coluna pode parecer perfeita e ainda estar errada</h4>
+                <p>Imagine uma coluna chamada <code>NOTA</code>:</p>
+                <pre><code>7.5
+8.2
+9.0
+15.3
+6.8</code></pre>
+                <p>O profiling consegue concluir corretamente:</p>
+                <pre><code>Tipo provável: Decimal
+Preenchimento: 100%</code></pre>
+                <p>Tecnicamente, está tudo certo.</p>
+                <p>Todos os valores são números.</p>
+                <p>Mas existe um problema se a regra do sistema disser:</p>
+                <pre><code>A nota deve estar entre 0 e 10.</code></pre>
+                <p>Nesse caso:</p>
+                <pre><code>15.3</code></pre>
+                <p>
+                  é um valor perfeitamente numérico e, ao mesmo tempo, um dado
+                  inválido.
+                </p>
+                <p>
+                  Essa diferença fez sentido para separar duas responsabilidades
+                  no Valtron:
+                </p>
+                <pre><code>PROFILING
+"O que existe?"
+
+QUALITY
+"O que existe está de acordo
+com o que eu espero?"</code></pre>
+
+                <h4>CPF é outro bom exemplo</h4>
+                <p>Considere:</p>
+                <pre><code>03000484590
+12345678901
+11111111111
+3000484590</code></pre>
+                <p>O profiling pode descobrir:</p>
+                <pre><code>Tipo provável: Texto
+
+Comprimento predominante: 11
+
+Valores preenchidos: 100%</code></pre>
+                <p>Mas ainda existem outras perguntas:</p>
+                <pre><code>Possui exatamente 11 dígitos?
+
+É um CPF matematicamente válido?
+
+Está duplicado?
+
+É obrigatório?</code></pre>
+                <p>Ter 11 dígitos não torna um CPF válido.</p>
+                <p>
+                  Da mesma forma, conseguir converter algo para número não
+                  significa que aquilo deveria ser um número.
+                </p>
+                <p>
+                  Data Quality começa quando existe uma <strong>expectativa
+                  sobre o dado</strong>.
+                </p>
+
+                <h4>Foi daí que surgiram as regras</h4>
+                <p>
+                  No Valtron, comecei a trabalhar com regras que podem ser
+                  associadas às colunas.
+                </p>
+                <p>Por exemplo:</p>
+                <pre><code>CPF
+
+✓ Obrigatório
+✓ Comprimento = 11
+✓ CPF válido
+✓ Valor único</code></pre>
+                <p>
+                  Depois o DuckDB pode analisar o documento e retornar algo
+                  parecido com:
+                </p>
+                <pre><code>CPF
+
+604.270 registros
+
+5.849 vazios
+12.421 com tamanho incorreto
+18.011 CPFs inválidos
+2.182 registros duplicados</code></pre>
+                <p>Isso muda bastante a forma de investigar um arquivo.</p>
+                <p>
+                  Em vez de descobrir um problema por acaso enquanto navego pela
+                  planilha, consigo perguntar explicitamente:
+                </p>
+                <blockquote>Quais registros não respeitam minhas regras?</blockquote>
+
+                <h4>O banco já consegue fazer boa parte disso</h4>
+                <p>
+                  Assim como aconteceu com profiling, muitas validações podem
+                  ser expressas em SQL.
+                </p>
+                <p>Para verificar valores obrigatórios:</p>
+                <pre><code>SELECT COUNT(*)
+FROM documento
+WHERE cpf IS NULL
+   OR TRIM(cpf) = '';</code></pre>
+                <p>Para comprimento:</p>
+                <pre><code>SELECT COUNT(*)
+FROM documento
+WHERE LENGTH(TRIM(cpf)) <> 11;</code></pre>
+                <p>Para duplicidades:</p>
+                <pre><code>SELECT cpf, COUNT(*)
+FROM documento
+GROUP BY cpf
+HAVING COUNT(*) > 1;</code></pre>
+                <p>
+                  O interessante não é inventar outra maneira de executar essas
+                  operações.
+                </p>
+                <p>
+                  É criar uma camada que organize essas consultas como
+                  <strong>regras de qualidade</strong>.
+                </p>
+                <pre><code>Regra visual
+     ↓
+Valtron
+     ↓
+condição conhecida
+     ↓
+DuckDB
+     ↓
+violações</code></pre>
+                <p>O usuário trabalha com o conceito:</p>
+                <pre><code>CPF deve ser único</code></pre>
+                <p>e não necessariamente com:</p>
+                <pre><code>GROUP BY cpf
+HAVING COUNT(*) > 1</code></pre>
+
+                <h4>E quem conhece SQL?</h4>
+                <p>Continua podendo usar SQL.</p>
+                <p>Essa é uma característica que quero preservar.</p>
+                <p>A interface não precisa substituir SQL.</p>
+                <p>Ela pode funcionar como uma camada acima dele.</p>
+                <p>Quem quer investigar visualmente pode usar:</p>
+                <pre><code>Qualidade
+→ CPF válido
+→ 18.011 violações
+→ Ver registros</code></pre>
+                <p>Quem prefere SQL continua tendo o console disponível.</p>
+                <p>São maneiras diferentes de chegar aos mesmos dados.</p>
+
+                <h4>As regras precisam ser explícitas</h4>
+                <p>
+                  Uma decisão importante foi não tentar adivinhar
+                  automaticamente todas as regras.
+                </p>
+                <p>Imagine uma coluna:</p>
+                <pre><code>IDADE</code></pre>
+                <p>O Valtron poderia perceber que ela contém números.</p>
+                <p>Mas qual seria o intervalo válido?</p>
+                <pre><code>0 a 100?
+0 a 120?
+18 a 65?</code></pre>
+                <p>Depende do contexto.</p>
+                <p>Ou uma coluna:</p>
+                <pre><code>STATUS</code></pre>
+                <p>Talvez os valores válidos sejam:</p>
+                <pre><code>ATIVO
+INATIVO</code></pre>
+                <p>Em outro sistema poderiam ser:</p>
+                <pre><code>PENDENTE
+APROVADO
+REPROVADO
+CANCELADO</code></pre>
+                <p>O profiling consegue ajudar a descobrir o que existe.</p>
+                <p>Mas a regra de negócio precisa vir de algum lugar.</p>
+                <p>
+                  Por isso prefiro que a primeira versão das regras seja
+                  determinística e explícita.
+                </p>
+
+                <h4>Algumas regras são genéricas</h4>
+                <p>Existem validações que fazem sentido em muitos contextos:</p>
+                <pre><code>Obrigatório
+Único
+Comprimento
+Numérico
+Intervalo numérico
+Valores permitidos
+Data válida
+Expressão regular
+E-mail válido
+CPF válido</code></pre>
+                <p>Então posso configurar:</p>
+                <pre><code>NOTA
+
+Regra:
+Intervalo numérico
+
+Mínimo: 0
+Máximo: 10</code></pre>
+                <p>ou:</p>
+                <pre><code>TURNO
+
+Valores permitidos:
+
+MATUTINO
+VESPERTINO
+NOTURNO</code></pre>
+                <p>O Valtron não precisa conhecer o sistema que gerou o arquivo.</p>
+                <p>Ele só precisa saber executar a regra.</p>
+
+                <h4>Datas mostraram um caso interessante</h4>
+                <p>Durante os testes encontrei valores como:</p>
+                <pre><code>33639</code></pre>
+                <p>em uma coluna de data de nascimento.</p>
+                <p>Uma validação configurada para:</p>
+                <pre><code>YYYY/MM/DD</code></pre>
+                <p>naturalmente considera <code>33639</code> inválido.</p>
+                <p>
+                  Só que esse número pode representar uma data no sistema de
+                  datas do Excel.
+                </p>
+                <p>Isso mostrou outro cuidado importante.</p>
+                <p>Uma regra precisa saber distinguir:</p>
+                <pre><code>valor armazenado</code></pre>
+                <p>de:</p>
+                <pre><code>valor interpretado</code></pre>
+                <p>O Valtron pode reconhecer:</p>
+                <pre><code>33639
+↓
+Serial de data do Excel
+↓
+data válida</code></pre>
+                <p>sem alterar o <code>33639</code> original.</p>
+                <p>
+                  Essa separação entre <strong>interpretar, validar e
+                  transformar</strong> começou a aparecer várias vezes durante o
+                  desenvolvimento.
+                </p>
+
+                <h4>Uma linha pode quebrar várias regras</h4>
+                <p>
+                  Outro problema interessante apareceu quando comecei a pensar
+                  no score de qualidade.
+                </p>
+                <p>Imagine:</p>
+                <pre><code>CPF = ""</code></pre>
+                <p>Esse registro pode violar:</p>
+                <pre><code>Obrigatório
+Comprimento = 11
+CPF válido</code></pre>
+                <p>Se simplesmente somarmos todas as violações, teremos três problemas.</p>
+                <p>Mas existe apenas <strong>uma linha problemática</strong>.</p>
+                <p>Então existem duas métricas diferentes:</p>
+                <pre><code>Violações de regras</code></pre>
+                <p>e:</p>
+                <pre><code>Registros com pelo menos um problema</code></pre>
+                <p>Isso importa bastante para calcular um indicador geral.</p>
+                <p>Imagine:</p>
+                <pre><code>604.270 registros
+
+36.281 possuem pelo menos
+um problema</code></pre>
+                <p>O score pode ser calculado sobre as linhas válidas:</p>
+                <pre><code>567.989 / 604.270
+
+≈ 94%</code></pre>
+                <p>Sem contar a mesma linha três ou quatro vezes.</p>
+
+                <h4>O número sozinho também pode enganar</h4>
+                <p>Mostrar:</p>
+                <pre><code>Qualidade: 99%</code></pre>
+                <p>parece excelente.</p>
+                <p>Mas em uma base com 4 milhões de registros, 1% significa:</p>
+                <pre><code>40.000 registros</code></pre>
+                <p>Por isso quero evitar depender apenas de cores ou percentuais.</p>
+                <p>Prefiro algo como:</p>
+                <pre><code>QUALIDADE
+
+99%
+
+4.000.000 registros
+40.000 com problemas</code></pre>
+                <p>Percentual fornece proporção.</p>
+                <p>Quantidade fornece dimensão.</p>
+                <p>Os dois juntos contam melhor a história.</p>
+
+                <h4>Clicar no problema precisa mostrar o problema</h4>
+                <p>
+                  Assim como no profiling, quero evitar um painel que apenas
+                  apresenta números.
+                </p>
+                <p>Se o Valtron disser:</p>
+                <pre><code>CPF inválido
+18.011 violações</code></pre>
+                <p>esse número precisa ser clicável.</p>
+                <p>O fluxo:</p>
+                <pre><code>CPF inválido
+18.011
+    ↓
+clique
+    ↓
+grid filtrada
+    ↓
+18.011 registros</code></pre>
+                <p>
+                  A mesma condição utilizada para contar as violações precisa
+                  ser usada para filtrar a grid.
+                </p>
+                <p>
+                  Isso parece detalhe de implementação, mas evita uma situação
+                  bastante ruim:
+                </p>
+                <pre><code>Painel:
+18.011 problemas
+
+Grid:
+17.982 registros</code></pre>
+                <p>
+                  Quando uma ferramenta analisa qualidade de dados, os próprios
+                  resultados dela precisam ser confiáveis.
+                </p>
+
+                <h4>Encontrar não significa corrigir</h4>
+                <p>Essa talvez seja a separação mais importante até agora.</p>
+                <p>Se o Valtron encontrar:</p>
+                <pre><code>12.391 CPFs com pontuação</code></pre>
+                <p>ele não deveria simplesmente alterar:</p>
+                <pre><code>030.004.845-90</code></pre>
+                <p>para:</p>
+                <pre><code>03000484590</code></pre>
+                <p>Só porque parece uma correção óbvia.</p>
+                <p>Primeiro:</p>
+                <pre><code>IDENTIFICAR</code></pre>
+                <p>Depois:</p>
+                <pre><code>VALIDAR</code></pre>
+                <p>E somente com intenção explícita:</p>
+                <pre><code>TRANSFORMAR</code></pre>
+                <p>
+                  Essa separação ajuda a evitar que uma ferramenta criada para
+                  analisar dados acabe modificando silenciosamente aquilo que
+                  deveria apenas investigar.
+                </p>
+
+                <h4>O fluxo começou a ficar mais claro</h4>
+                <p>
+                  Com Data Quality, comecei a enxergar o Valtron menos como um
+                  visualizador de arquivos e mais como uma ferramenta de
+                  preparação de dados.
+                </p>
+                <p>O fluxo está ficando assim:</p>
+                <pre><code>ARQUIVO
+   ↓
+IMPORTAR
+   ↓
+EXPLORAR
+   ↓
+PROFILE
+   ↓
+"O que existe?"
+   ↓
+QUALITY
+   ↓
+"O que está errado?"
+   ↓
+TRANSFORM
+   ↓
+"Como quero corrigir?"
+   ↓
+EXPORTAR</code></pre>
+                <p>Cada etapa tem uma responsabilidade.</p>
+                <p>E isso leva naturalmente ao próximo problema.</p>
+                <p>
+                  Se eu descubro que existem 12 mil datas em serial do Excel, 8
+                  mil CPFs sem padding e milhares de nomes com espaços extras,
+                  <strong>como corrigir tudo isso sem editar milhares de células
+                  manualmente?</strong>
+                </p>
+                <p>É aí que entram as transformações em massa.</p>
+                <p>
+                  No próximo post vou falar sobre como estou trabalhando em
+                  <strong>Data Preparation no Valtron, usando preview antes de
+                  modificar milhares de registros e mantendo a possibilidade de
+                  desfazer as transformações</strong>.
+                </p>
+              </article>
+            </div>
+
+            <div class="post-list post-next post-index">
+              <div class="blog-single-tools">
+                <a class="blog-all-link" href="../../#blog">Ver todas as postagens</a>
+              </div>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 01</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../origem-valtron/">Por que comecei a desenvolver o Valtron</a></h3>
+                <p>Origem do Valtron, DuckDB local, grid virtualizada e a ideia de um data studio desktop para arquivos grandes.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 02</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../importacao-xlsx/">Como carreguei mais de 600 mil registros em poucos segundos</a></h3>
+                <p>Como o Valtron importa XLSX com DuckDB read_xlsx, evita trabalho duplicado e preserva colunas como texto com all_varchar.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 03</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../grid-virtualizada/">Importar 600 mil linhas rápido não adianta se a interface travar</a></h3>
+                <p>Como a grid virtualizada do Valtron usa janelas de dados, prefetch e cache para navegar arquivos grandes sem travar.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 04</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../duckdb-desktop/">DuckDB dentro de uma aplicação desktop</a></h3>
+                <p>Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 05</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../importar-como-texto/">Por que o Valtron importa os dados como texto antes de tentar entendê-los</a></h3>
+                <p>Por que preservar colunas como texto ajuda o Valtron a interpretar, validar e transformar dados sem alterar o arquivo cedo demais.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 06</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../data-profiling-600-mil/">Data Profiling: entendendo 600 mil registros sem escrever várias queries</a></h3>
+                <p>Como o Valtron usa DuckDB para gerar estatísticas, inferir tipos prováveis e investigar distribuições em colunas grandes.</p>
+              </article>
+
+              <article class="post-card featured">
+                <div class="post-meta">
+                  <span>Post 07</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../data-quality/">Data Quality: entender os dados não significa que eles estão corretos</a></h3>
+                <p>Como o Valtron separa profiling de regras explícitas de qualidade, violações, score e investigação dos registros problemáticos.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 08</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="../data-preparation/">Data Preparation: corrigindo milhares de registros sem editar célula por célula</a></h3>
+                <p>Preview, transformações em massa no DuckDB, undo por deltas e receitas reutilizáveis para preparação de dados no Valtron.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="shell">
+        Valtron é mantido no repositório
+        <a href="https://github.com/Zigtecnologia-web/valtron">Zigtecnologia-web/valtron</a>.
+      </div>
+    </footer>
   </body>
 </html>
