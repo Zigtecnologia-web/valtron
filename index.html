@@ -352,6 +352,19 @@
         gap: 12px;
       }
 
+      body:not(.single-post-mode) .blog-layout {
+        grid-template-columns: 1fr;
+      }
+
+      body:not(.single-post-mode) .post-feed {
+        display: none;
+      }
+
+      body:not(.single-post-mode) .post-index {
+        position: static;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+
       .post-feed {
         display: grid;
         gap: 18px;
@@ -621,6 +634,14 @@
         .capture-grid,
         .proof {
           grid-template-columns: 1fr;
+        }
+
+        .post-next {
+          position: static;
+        }
+
+        body.single-post-mode .post-index {
+          order: -1;
         }
       }
     </style>
@@ -1901,6 +1922,1676 @@ Exportar</code></pre>
                   que com limitações de tipagem.
                 </p>
               </article>
+
+              <article id="post-importar-como-texto" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Data Profiling</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <a class="post-permalink" href="#post-importar-como-texto">Link desta postagem</a>
+                <h3>Por que o Valtron importa os dados como texto antes de tentar entendê-los</h3>
+                <p>
+                  Quando comecei a trabalhar na importação do Valtron, tomei
+                  uma decisão que pode parecer estranha:
+                </p>
+                <p><strong>as colunas de um arquivo são inicialmente importadas como texto.</strong></p>
+                <p>Mesmo quando os valores parecem números, datas ou valores decimais.</p>
+                <p>Por exemplo:</p>
+                <pre><code>NOME            NOTA        NASCIMENTO
+João            8.5         1992-02-05
+Maria           9.2         33639
+Pedro           7           05/10/1995</code></pre>
+                <p>Seria natural transformar imediatamente:</p>
+                <pre><code>NOTA        → DECIMAL
+NASCIMENTO  → DATE</code></pre>
+                <p>Mas existe um problema.</p>
+                <p>Dados reais nem sempre são tão organizados quanto parecem.</p>
+
+                <h4>O arquivo diz menos do que imaginamos</h4>
+                <p>Considere uma coluna chamada <code>CPF</code>:</p>
+                <pre><code>03000484590
+3000484590
+123.456.789-00
+NULL</code></pre>
+                <p>O que ela é?</p>
+                <p>Para uma pessoa, parece óbvio que estamos olhando CPFs.</p>
+                <p>Para o computador, são apenas valores.</p>
+                <p>Agora imagine uma coluna:</p>
+                <pre><code>CODIGO
+
+000123
+000124
+000125</code></pre>
+                <p>Se eu inferir automaticamente que isso é um número, posso transformar:</p>
+                <pre><code>000123</code></pre>
+                <p>em:</p>
+                <pre><code>123</code></pre>
+                <p>Tecnicamente o número é equivalente.</p>
+                <p>Para o dado original, talvez não seja.</p>
+                <p>Os zeros podem fazer parte do identificador.</p>
+
+                <h4>Datas conseguem ser ainda mais interessantes</h4>
+                <p>Recentemente encontrei um bom exemplo disso.</p>
+                <p>Uma coluna de data de nascimento continha:</p>
+                <pre><code>33639</code></pre>
+                <p>Olhando isoladamente, parece apenas um inteiro.</p>
+                <p>
+                  Mas esse valor pode representar uma data armazenada como
+                  <strong>serial do Excel</strong>.
+                </p>
+                <p>Ou seja:</p>
+                <pre><code>33639</code></pre>
+                <p>pode ser interpretado como uma data no sistema utilizado pelo Excel.</p>
+                <p>Agora imagine que durante a importação eu simplesmente decida:</p>
+                <pre><code>33639 → INTEGER</code></pre>
+                <p>
+                  A informação não necessariamente foi perdida, mas a decisão
+                  sobre o significado daquele valor foi tomada cedo demais.
+                </p>
+                <p>
+                  E esse é exatamente o tipo de decisão que comecei a evitar no
+                  Valtron.
+                </p>
+
+                <h4>Armazenar é diferente de interpretar</h4>
+                <p>Passei a separar duas coisas:</p>
+                <pre><code>VALOR ORIGINAL
+      ↓
+   "33639"
+
+INTERPRETAÇÃO
+      ↓
+possível serial de data do Excel</code></pre>
+                <p>O primeiro pertence ao armazenamento.</p>
+                <p>O segundo pertence à análise.</p>
+                <p>Essa separação é importante.</p>
+                <p>O Valtron pode dizer:</p>
+                <pre><code>DATA_NASCIMENTO
+
+Tipo provável:
+Data
+
+Formato predominante:
+Serial de data do Excel</code></pre>
+                <p>sem precisar modificar:</p>
+                <pre><code>33639</code></pre>
+                <p>para:</p>
+                <pre><code>05/02/1992</code></pre>
+                <p>O dado continua intacto.</p>
+                <p>A interpretação pode evoluir.</p>
+
+                <h4>É por isso que uso all_varchar</h4>
+                <p>
+                  No caminho principal de importação XLSX, o Valtron utiliza o
+                  <code>read_xlsx</code> do DuckDB com
+                  <code>all_varchar = true</code>. As colunas importadas são
+                  preservadas inicialmente como <code>VARCHAR</code>.
+                </p>
+                <p>Conceitualmente:</p>
+                <pre><code>CREATE TABLE documento AS
+SELECT *
+FROM read_xlsx(
+    'arquivo.xlsx',
+    header = true,
+    all_varchar = true
+);</code></pre>
+                <p>Isso significa que valores como:</p>
+                <pre><code>000123
+8.50
+33639
+03000484590</code></pre>
+                <p>
+                  podem ser preservados sem o Valtron tentar decidir
+                  imediatamente o que representam.
+                </p>
+                <p>Depois entra outra camada.</p>
+
+                <h4>Data Profiling</h4>
+                <p>
+                  Depois que os dados estão no DuckDB, o Valtron pode começar a
+                  fazer perguntas.
+                </p>
+                <p>Por exemplo:</p>
+                <pre><code>Quantos valores estão vazios?
+
+Quantos são distintos?
+
+Os valores parecem números?
+
+Parecem datas?
+
+Qual o tamanho mínimo e máximo?
+
+Quais valores aparecem com mais frequência?</code></pre>
+                <p>É aí que entra o <strong>Data Profiling</strong>.</p>
+                <p>Em vez de decidir durante a importação:</p>
+                <pre><code>essa coluna É decimal</code></pre>
+                <p>o Valtron pode concluir:</p>
+                <pre><code>essa coluna PARECE decimal</code></pre>
+                <p>Existe uma diferença importante entre as duas frases.</p>
+                <p>A primeira altera a forma como o dado será armazenado.</p>
+                <p>A segunda fornece informação para o usuário tomar uma decisão.</p>
+
+                <h4>Inferência precisa aceitar que pode estar errada</h4>
+                <p>Imagine:</p>
+                <pre><code>NOTA
+
+8.5
+7.2
+9.1
+10
+NÃO INFORMADO
+8.0</code></pre>
+                <p>A maior parte dos valores parece decimal.</p>
+                <p>Mas existe:</p>
+                <pre><code>NÃO INFORMADO</code></pre>
+                <p>
+                  Se eu tentar converter a coluna inteira durante a importação,
+                  preciso decidir o que fazer com esse registro.
+                </p>
+                <p>Falhar a importação?</p>
+                <p>Transformar em <code>NULL</code>?</p>
+                <p>Ignorar?</p>
+                <p>Modificar o valor?</p>
+                <p>Qualquer uma dessas opções já é uma decisão sobre os dados.</p>
+                <p>No profiling posso simplesmente dizer:</p>
+                <pre><code>NOTA
+
+Decimal provável
+
+99,8% compatíveis
+0,2% incompatíveis</code></pre>
+                <p>E deixar o usuário investigar os casos restantes.</p>
+                <p>Isso me parece muito mais seguro.</p>
+
+                <h4>Profiling e tipagem são coisas diferentes</h4>
+                <p>Esse conceito começou a ficar importante na arquitetura do Valtron.</p>
+                <pre><code>TIPO FÍSICO
+
+VARCHAR
+
+       ↓
+
+PROFILING
+
+99,8% dos valores
+parecem decimais
+
+       ↓
+
+TIPO PROVÁVEL
+
+Decimal</code></pre>
+                <p>O tipo físico diz como o valor está armazenado.</p>
+                <p>O tipo provável diz como o Valtron interpreta aquele conteúdo.</p>
+                <p>Essas duas informações não precisam ser iguais.</p>
+
+                <h4>Depois vem Data Quality</h4>
+                <p>
+                  Quando sabemos o que uma coluna provavelmente representa,
+                  podemos começar a perguntar se os valores fazem sentido.
+                </p>
+                <p>Por exemplo:</p>
+                <pre><code>CPF
+
+604.270 registros
+
+5.849 vazios
+12.421 com tamanho incorreto
+18.011 inválidos
+2.182 duplicados</code></pre>
+                <p>Isso já é diferente de profiling.</p>
+                <p>Profiling pergunta:</p>
+                <blockquote>O que existe aqui?</blockquote>
+                <p>Data Quality pergunta:</p>
+                <blockquote>O que existe aqui respeita as regras que eu espero?</blockquote>
+                <p>
+                  Um CPF pode estar armazenado perfeitamente como texto e ainda
+                  ser um CPF inválido.
+                </p>
+                <p>
+                  Uma nota pode ser perfeitamente convertível para decimal e
+                  ainda possuir valor:
+                </p>
+                <pre><code>15.7</code></pre>
+                <p>quando a regra aceita apenas:</p>
+                <pre><code>0 até 10</code></pre>
+                <p>Tipagem e qualidade também são problemas diferentes.</p>
+
+                <h4>E só depois vem transformação</h4>
+                <p>Essa separação começou a formar um fluxo que gosto bastante:</p>
+                <pre><code>IMPORTAR
+   ↓
+PRESERVAR
+   ↓
+ANALISAR
+   ↓
+VALIDAR
+   ↓
+TRANSFORMAR</code></pre>
+                <p>Por exemplo:</p>
+                <pre><code>CPF original
+
+030.004.845-90</code></pre>
+                <p>O Valtron pode primeiro identificar:</p>
+                <pre><code>Texto provável
+14 caracteres
+formatação presente</code></pre>
+                <p>Depois validar:</p>
+                <pre><code>CPF válido?</code></pre>
+                <p>E somente quando o usuário decidir transformar:</p>
+                <pre><code>030.004.845-90
+
+       ↓
+
+Remover pontuação
+
+       ↓
+
+03000484590</code></pre>
+                <p>Nesse momento existe uma intenção explícita de modificar o dado.</p>
+
+                <h4>Preview antes de alterar</h4>
+                <p>
+                  Essa ideia também está direcionando a parte de transformação
+                  que estou desenvolvendo.
+                </p>
+                <p>
+                  Antes de modificar centenas de milhares de registros, quero
+                  que o Valtron consiga mostrar algo assim:
+                </p>
+                <pre><code>NORMALIZAR CPF
+
+Original             Resultado
+────────────────────────────────
+030.004.845-90       03000484590
+123.456.789-00       12345678900
+3000484590           03000484590
+
+12.391 valores serão alterados
+
+[ Cancelar ]    [ Aplicar ]</code></pre>
+                <p>
+                  A diferença é que agora a transformação não aconteceu porque
+                  um algoritmo decidiu durante a importação.
+                </p>
+                <p>
+                  Ela aconteceu porque o usuário viu o impacto e decidiu
+                  aplicar.
+                </p>
+
+                <h4>O princípio que ficou</h4>
+                <p>
+                  No começo, <code>all_varchar = true</code> era principalmente
+                  uma decisão técnica relacionada à importação.
+                </p>
+                <p>
+                  Com a evolução do Valtron, percebi que ela também combina com
+                  uma decisão de produto.
+                </p>
+                <p>
+                  <strong>Preservar primeiro. Interpretar depois. Transformar somente quando houver intenção.</strong>
+                </p>
+                <p>
+                  Isso não significa que armazenar tudo como texto seja a melhor
+                  estratégia para qualquer sistema.
+                </p>
+                <p>
+                  Em um sistema transacional, eu quero tipos fortes, constraints
+                  e regras bem definidas no banco.
+                </p>
+                <p>Mas o Valtron recebe arquivos que ele não conhece previamente.</p>
+                <p>É um cenário diferente.</p>
+                <p>
+                  Quando alguém entrega uma planilha com 600 mil registros, eu
+                  prefiro que o Valtron comece perguntando:
+                </p>
+                <blockquote>O que existe nesses dados?</blockquote>
+                <p>em vez de começar afirmando:</p>
+                <blockquote>Eu já sei o que esses dados significam.</blockquote>
+                <p>
+                  No próximo post quero entrar justamente nessa etapa:
+                  <strong>como o Data Profiling pode ajudar a entender centenas
+                  de milhares de registros sem precisar escrever várias
+                  consultas SQL manualmente.</strong>
+                </p>
+              </article>
+
+              <article id="post-data-profiling-600-mil" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Data Profiling</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <a class="post-permalink" href="#post-data-profiling-600-mil">Link desta postagem</a>
+                <h3>Data Profiling: entendendo 600 mil registros sem escrever várias queries</h3>
+                <p>
+                  Depois de conseguir importar arquivos grandes e navegar pelos
+                  dados sem travar a interface, comecei a pensar em outro
+                  problema.
+                </p>
+                <p><strong>Como entender rapidamente o que existe em uma coluna?</strong></p>
+                <p>
+                  Imagine receber uma planilha com mais de 600 mil registros e
+                  encontrar uma coluna chamada:
+                </p>
+                <pre><code>NOTA</code></pre>
+                <p>
+                  Antes de trabalhar com ela, algumas perguntas aparecem
+                  naturalmente:
+                </p>
+                <pre><code>Quantos registros estão preenchidos?
+
+Quantos estão vazios?
+
+Quantos valores diferentes existem?
+
+Qual é o menor valor?
+
+Qual é o maior?
+
+A coluna realmente contém números?
+
+Existem valores estranhos?
+
+Quais valores aparecem com mais frequência?</code></pre>
+                <p>Todas essas perguntas podem ser respondidas com SQL.</p>
+                <p>O problema é ter que fazer isso manualmente para cada coluna.</p>
+                <p>
+                  Foi aí que comecei a trabalhar com <strong>Data Profiling</strong>
+                  no Valtron.
+                </p>
+
+                <h4>O que é Data Profiling?</h4>
+                <p>
+                  De forma simples, Data Profiling é analisar um conjunto de
+                  dados para entender sua estrutura, distribuição e
+                  características.
+                </p>
+                <p>Não é necessariamente procurar erros.</p>
+                <p>É primeiro entender o que existe.</p>
+                <p>Por exemplo, uma coluna pode apresentar:</p>
+                <pre><code>NOTA
+
+604.270 registros
+598.421 preenchidos
+5.849 vazios
+
+572 valores distintos
+
+Mínimo: 0
+Máximo: 10
+Média: 7,3
+
+Tipo provável:
+Decimal</code></pre>
+                <p>
+                  Com essas informações já consigo entender bastante coisa sem
+                  precisar percorrer milhares de registros visualmente.
+                </p>
+
+                <h4>Isso tudo já poderia ser feito com SQL</h4>
+                <p>Sim.</p>
+                <p>Por exemplo, para descobrir valores vazios:</p>
+                <pre><code>SELECT COUNT(*)
+FROM documento
+WHERE nota IS NULL
+   OR TRIM(nota) = '';</code></pre>
+                <p>Para valores distintos:</p>
+                <pre><code>SELECT COUNT(DISTINCT nota)
+FROM documento;</code></pre>
+                <p>Para descobrir os valores mais frequentes:</p>
+                <pre><code>SELECT
+    nota,
+    COUNT(*) AS quantidade
+FROM documento
+GROUP BY nota
+ORDER BY quantidade DESC
+LIMIT 10;</code></pre>
+                <p>E assim por diante.</p>
+                <p>O banco já sabe responder essas perguntas.</p>
+                <p>O trabalho do Valtron é outro.</p>
+                <p>
+                  Ele precisa transformar várias dessas perguntas em uma
+                  experiência de exploração.
+                </p>
+                <pre><code>usuário
+   ↓
+Analisar coluna
+   ↓
+Valtron
+   ↓
+consultas analíticas
+   ↓
+DuckDB
+   ↓
+resultado
+   ↓
+painel visual</code></pre>
+                <p>Em vez de escrever cinco ou dez consultas, clico na coluna.</p>
+
+                <h4>O banco continua fazendo o trabalho pesado</h4>
+                <p>
+                  Uma decisão importante foi não trazer centenas de milhares de
+                  valores para o frontend para calcular essas estatísticas.
+                </p>
+                <p>Não faria sentido:</p>
+                <pre><code>604.270 valores
+      ↓
+Rust
+      ↓
+TypeScript
+      ↓
+calcular estatísticas</code></pre>
+                <p>Já existe um motor analítico trabalhando localmente.</p>
+                <p>Então prefiro:</p>
+                <pre><code>604.270 valores
+      ↓
+DuckDB
+      ↓
+COUNT
+DISTINCT
+MIN
+MAX
+AVG
+GROUP BY
+      ↓
+resultado pequeno
+      ↓
+interface</code></pre>
+                <p>Essa diferença é importante.</p>
+                <p>
+                  O frontend não precisa conhecer todos os valores de uma coluna
+                  para saber que existem 5.849 vazios.
+                </p>
+                <p>Ele só precisa receber:</p>
+                <pre><code>empty_count = 5849</code></pre>
+
+                <h4>Mas existe uma diferença entre o tipo armazenado e o tipo provável</h4>
+                <p>
+                  No post anterior expliquei por que o Valtron inicialmente
+                  preserva as colunas importadas como texto.
+                </p>
+                <p>Isso cria uma situação interessante.</p>
+                <p>
+                  Para o DuckDB, uma coluna pode estar fisicamente armazenada
+                  como:
+                </p>
+                <pre><code>VARCHAR</code></pre>
+                <p>Mas seu conteúdo pode ser:</p>
+                <pre><code>8.5
+7.2
+9.0
+6.7
+10</code></pre>
+                <p>O profiling pode analisar esses valores e concluir:</p>
+                <pre><code>Tipo físico:
+VARCHAR
+
+Tipo provável:
+Decimal</code></pre>
+                <p>
+                  Isso permite preservar o arquivo original e, ao mesmo tempo,
+                  entender melhor o conteúdo.
+                </p>
+
+                <h4>O tipo provável não pode ser uma verdade absoluta</h4>
+                <p>Agora considere:</p>
+                <pre><code>8.5
+7.2
+9.0
+NÃO INFORMADO
+10</code></pre>
+                <p>A coluna ainda parece numérica.</p>
+                <p>Mas não é 100% compatível com números.</p>
+                <p>Por isso gosto mais da ideia de trabalhar com evidências:</p>
+                <pre><code>NOTA
+
+Decimal provável
+
+99,8% dos valores
+compatíveis com decimal</code></pre>
+                <p>em vez de simplesmente afirmar:</p>
+                <pre><code>NOTA É DECIMAL</code></pre>
+                <p>
+                  Essa distinção parece pequena, mas é importante quando estamos
+                  trabalhando com dados que vieram de fora e cuja qualidade
+                  ainda não conhecemos.
+                </p>
+
+                <h4>Um exemplo ainda mais curioso: datas</h4>
+                <p>Considere uma coluna:</p>
+                <pre><code>DATA_NASCIMENTO
+
+33639
+34122
+35001</code></pre>
+                <p>Olhando rapidamente, parece uma coluna de inteiros.</p>
+                <p>
+                  Mas esses valores podem ser datas armazenadas como números
+                  seriais do Excel.
+                </p>
+                <p>
+                  O profiling pode detectar que uma grande parte dos valores é
+                  compatível com esse padrão e apresentar algo como:
+                </p>
+                <pre><code>DATA_NASCIMENTO
+
+Data provável
+
+Formato predominante:
+Serial de data do Excel
+
+Exemplo:
+
+33639
+↓
+05/02/1992</code></pre>
+                <p>
+                  O ponto importante é que o Valtron <strong>não precisa alterar
+                  <code>33639</code> para entender que aquilo pode representar
+                  uma data</strong>.
+                </p>
+                <p>Profiling é interpretação.</p>
+                <p>Transformação é outra etapa.</p>
+
+                <h4>Distribuição também conta uma história</h4>
+                <p>Média, mínimo e máximo são úteis para números.</p>
+                <p>Mas muitas colunas são categóricas.</p>
+                <p>Por exemplo:</p>
+                <pre><code>TURNO
+
+MATUTINO
+VESPERTINO
+NOTURNO</code></pre>
+                <p>Nesse caso, talvez seja mais interessante mostrar:</p>
+                <pre><code>MATUTINO       284.120   47%
+VESPERTINO     211.843   35%
+NOTURNO        108.307   18%</code></pre>
+                <p>Isso permite perceber rapidamente como os dados estão distribuídos.</p>
+                <p>Também pode revelar algo estranho:</p>
+                <pre><code>MATUTINO
+Matutino
+matutino
+MAT
+M</code></pre>
+                <p>Talvez sejam cinco categorias diferentes.</p>
+                <p>Talvez sejam cinco maneiras diferentes de representar a mesma coisa.</p>
+                <p>O profiling não precisa decidir isso.</p>
+                <p>Ele precisa <strong>tornar isso visível</strong>.</p>
+
+                <h4>E é aí que profiling começa a conversar com qualidade</h4>
+                <p>Imagine que o profiling mostre:</p>
+                <pre><code>TURNO
+
+5 valores distintos
+
+MATUTINO
+VESPERTINO
+NOTURNO
+MAT
+VESP</code></pre>
+                <p>O próximo pensamento provavelmente será:</p>
+                <blockquote>Eu esperava apenas MATUTINO, VESPERTINO e NOTURNO.</blockquote>
+                <p>Isso já não é mais uma pergunta sobre o que existe.</p>
+                <p>É uma pergunta sobre o que <strong>deveria existir</strong>.</p>
+                <p>E aí entramos em Data Quality.</p>
+                <p>A separação que estou usando no Valtron é:</p>
+                <pre><code>PROFILING
+
+"O que existe?"
+
+       ↓
+
+QUALITY
+
+"Isso está de acordo
+com o que eu espero?"</code></pre>
+
+                <h4>O clique precisa levar até os dados</h4>
+                <p>
+                  Outra coisa que considero importante é evitar transformar
+                  profiling em um dashboard bonito que termina nele mesmo.
+                </p>
+                <p>Se o painel mostrar:</p>
+                <pre><code>5.849 valores vazios</code></pre>
+                <p>quero poder clicar nesse número e ver exatamente essas linhas.</p>
+                <p>Se mostrar:</p>
+                <pre><code>MAT
+1.283 registros</code></pre>
+                <p>
+                  quero clicar em <code>MAT</code> e chegar nesses 1.283
+                  registros.
+                </p>
+                <p>O fluxo fica:</p>
+                <pre><code>estatística
+    ↓
+clique
+    ↓
+filtro
+    ↓
+grid
+    ↓
+registros reais</code></pre>
+                <p>Isso transforma profiling em ferramenta de investigação.</p>
+                <p>Não apenas em relatório.</p>
+
+                <h4>O mesmo vale para grandes volumes</h4>
+                <p>
+                  Se uma coluna possui 600 mil registros, o profiling não deve
+                  significar carregar os 600 mil no navegador.
+                </p>
+                <p>O DuckDB analisa.</p>
+                <p>O backend devolve resultados agregados.</p>
+                <p>A grid continua virtualizada.</p>
+                <p>
+                  Quando o usuário decide investigar alguma coisa, somente a
+                  janela necessária é carregada.
+                </p>
+                <pre><code>600.000 registros
+       │
+       ▼
+     DuckDB
+       │
+       ├── profiling
+       │      ↓
+       │   estatísticas
+       │
+       └── filtro
+              ↓
+         100 registros
+              ↓
+             grid</code></pre>
+                <p>
+                  É a mesma filosofia que venho usando em outras partes do
+                  Valtron:
+                </p>
+                <p>
+                  <strong>manter o trabalho pesado próximo dos dados e
+                  transportar somente aquilo que a interface realmente
+                  precisa.</strong>
+                </p>
+
+                <h4>Profiling não substitui conhecimento sobre os dados</h4>
+                <p>Esse também é um limite importante.</p>
+                <p>O Valtron pode descobrir:</p>
+                <pre><code>99,7% dos valores possuem 11 caracteres</code></pre>
+                <p>Mas isso não significa automaticamente:</p>
+                <pre><code>essa coluna contém CPFs válidos</code></pre>
+                <p>Pode identificar:</p>
+                <pre><code>valores entre 0 e 10</code></pre>
+                <p>mas não sabe necessariamente que aquilo deveria ser uma nota.</p>
+                <p>
+                  Existe uma diferença entre descobrir padrões e conhecer a
+                  regra de negócio.
+                </p>
+                <p>Por isso estou separando:</p>
+                <pre><code>Profiling
+↓
+descobrir características
+
+Quality Rules
+↓
+declarar expectativas</code></pre>
+
+                <h4>O que mudou no Valtron</h4>
+                <p>No começo, a pergunta principal era:</p>
+                <blockquote>Consigo abrir esse arquivo rapidamente?</blockquote>
+                <p>Depois passou a ser:</p>
+                <blockquote>Consigo navegar por ele sem travar?</blockquote>
+                <p>Agora surgiu outra:</p>
+                <blockquote>Consigo entender o que existe nele sem começar escrevendo várias consultas?</blockquote>
+                <p>
+                  Essa terceira pergunta está aproximando o Valtron mais de uma
+                  ferramenta de análise e preparação de dados do que de um
+                  simples visualizador de planilhas.
+                </p>
+                <p>O fluxo começa a ficar:</p>
+                <pre><code>IMPORTAR
+   ↓
+EXPLORAR
+   ↓
+ENTENDER
+   ↓
+VALIDAR
+   ↓
+TRANSFORMAR</code></pre>
+                <p>E a próxima etapa é justamente a validação.</p>
+                <p>
+                  No próximo post vou falar sobre <strong>Data Quality e a
+                  diferença entre descobrir que uma coluna parece conter CPFs e
+                  verificar se esses CPFs realmente são válidos</strong>.
+                </p>
+              </article>
+
+              <article id="post-data-quality" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Data Quality</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <a class="post-permalink" href="#post-data-quality">Link desta postagem</a>
+                <h3>Data Quality: entender os dados não significa que eles estão corretos</h3>
+                <p>
+                  No último post falei sobre Data Profiling e como comecei a
+                  usar o DuckDB para entender melhor as colunas importadas pelo
+                  Valtron.
+                </p>
+                <p>O profiling consegue responder perguntas como:</p>
+                <pre><code>Quantos valores estão vazios?
+Quantos são distintos?
+Qual é o tamanho dos valores?
+Quais aparecem com mais frequência?
+A coluna parece numérica?
+Parece uma data?</code></pre>
+                <p>
+                  Só que, depois de implementar isso, apareceu uma diferença
+                  importante.
+                </p>
+                <p>
+                  <strong>Entender o que existe nos dados não significa saber se
+                  os dados estão corretos.</strong>
+                </p>
+                <p>É aí que entra Data Quality.</p>
+
+                <h4>Uma coluna pode parecer perfeita e ainda estar errada</h4>
+                <p>Imagine uma coluna chamada <code>NOTA</code>:</p>
+                <pre><code>7.5
+8.2
+9.0
+15.3
+6.8</code></pre>
+                <p>O profiling consegue concluir corretamente:</p>
+                <pre><code>Tipo provável: Decimal
+Preenchimento: 100%</code></pre>
+                <p>Tecnicamente, está tudo certo.</p>
+                <p>Todos os valores são números.</p>
+                <p>Mas existe um problema se a regra do sistema disser:</p>
+                <pre><code>A nota deve estar entre 0 e 10.</code></pre>
+                <p>Nesse caso:</p>
+                <pre><code>15.3</code></pre>
+                <p>
+                  é um valor perfeitamente numérico e, ao mesmo tempo, um dado
+                  inválido.
+                </p>
+                <p>
+                  Essa diferença fez sentido para separar duas responsabilidades
+                  no Valtron:
+                </p>
+                <pre><code>PROFILING
+"O que existe?"
+
+QUALITY
+"O que existe está de acordo
+com o que eu espero?"</code></pre>
+
+                <h4>CPF é outro bom exemplo</h4>
+                <p>Considere:</p>
+                <pre><code>03000484590
+12345678901
+11111111111
+3000484590</code></pre>
+                <p>O profiling pode descobrir:</p>
+                <pre><code>Tipo provável: Texto
+
+Comprimento predominante: 11
+
+Valores preenchidos: 100%</code></pre>
+                <p>Mas ainda existem outras perguntas:</p>
+                <pre><code>Possui exatamente 11 dígitos?
+
+É um CPF matematicamente válido?
+
+Está duplicado?
+
+É obrigatório?</code></pre>
+                <p>Ter 11 dígitos não torna um CPF válido.</p>
+                <p>
+                  Da mesma forma, conseguir converter algo para número não
+                  significa que aquilo deveria ser um número.
+                </p>
+                <p>
+                  Data Quality começa quando existe uma <strong>expectativa
+                  sobre o dado</strong>.
+                </p>
+
+                <h4>Foi daí que surgiram as regras</h4>
+                <p>
+                  No Valtron, comecei a trabalhar com regras que podem ser
+                  associadas às colunas.
+                </p>
+                <p>Por exemplo:</p>
+                <pre><code>CPF
+
+✓ Obrigatório
+✓ Comprimento = 11
+✓ CPF válido
+✓ Valor único</code></pre>
+                <p>
+                  Depois o DuckDB pode analisar o documento e retornar algo
+                  parecido com:
+                </p>
+                <pre><code>CPF
+
+604.270 registros
+
+5.849 vazios
+12.421 com tamanho incorreto
+18.011 CPFs inválidos
+2.182 registros duplicados</code></pre>
+                <p>Isso muda bastante a forma de investigar um arquivo.</p>
+                <p>
+                  Em vez de descobrir um problema por acaso enquanto navego pela
+                  planilha, consigo perguntar explicitamente:
+                </p>
+                <blockquote>Quais registros não respeitam minhas regras?</blockquote>
+
+                <h4>O banco já consegue fazer boa parte disso</h4>
+                <p>
+                  Assim como aconteceu com profiling, muitas validações podem
+                  ser expressas em SQL.
+                </p>
+                <p>Para verificar valores obrigatórios:</p>
+                <pre><code>SELECT COUNT(*)
+FROM documento
+WHERE cpf IS NULL
+   OR TRIM(cpf) = '';</code></pre>
+                <p>Para comprimento:</p>
+                <pre><code>SELECT COUNT(*)
+FROM documento
+WHERE LENGTH(TRIM(cpf)) <> 11;</code></pre>
+                <p>Para duplicidades:</p>
+                <pre><code>SELECT cpf, COUNT(*)
+FROM documento
+GROUP BY cpf
+HAVING COUNT(*) > 1;</code></pre>
+                <p>
+                  O interessante não é inventar outra maneira de executar essas
+                  operações.
+                </p>
+                <p>
+                  É criar uma camada que organize essas consultas como
+                  <strong>regras de qualidade</strong>.
+                </p>
+                <pre><code>Regra visual
+     ↓
+Valtron
+     ↓
+condição conhecida
+     ↓
+DuckDB
+     ↓
+violações</code></pre>
+                <p>O usuário trabalha com o conceito:</p>
+                <pre><code>CPF deve ser único</code></pre>
+                <p>e não necessariamente com:</p>
+                <pre><code>GROUP BY cpf
+HAVING COUNT(*) > 1</code></pre>
+
+                <h4>E quem conhece SQL?</h4>
+                <p>Continua podendo usar SQL.</p>
+                <p>Essa é uma característica que quero preservar.</p>
+                <p>A interface não precisa substituir SQL.</p>
+                <p>Ela pode funcionar como uma camada acima dele.</p>
+                <p>Quem quer investigar visualmente pode usar:</p>
+                <pre><code>Qualidade
+→ CPF válido
+→ 18.011 violações
+→ Ver registros</code></pre>
+                <p>Quem prefere SQL continua tendo o console disponível.</p>
+                <p>São maneiras diferentes de chegar aos mesmos dados.</p>
+
+                <h4>As regras precisam ser explícitas</h4>
+                <p>
+                  Uma decisão importante foi não tentar adivinhar
+                  automaticamente todas as regras.
+                </p>
+                <p>Imagine uma coluna:</p>
+                <pre><code>IDADE</code></pre>
+                <p>O Valtron poderia perceber que ela contém números.</p>
+                <p>Mas qual seria o intervalo válido?</p>
+                <pre><code>0 a 100?
+0 a 120?
+18 a 65?</code></pre>
+                <p>Depende do contexto.</p>
+                <p>Ou uma coluna:</p>
+                <pre><code>STATUS</code></pre>
+                <p>Talvez os valores válidos sejam:</p>
+                <pre><code>ATIVO
+INATIVO</code></pre>
+                <p>Em outro sistema poderiam ser:</p>
+                <pre><code>PENDENTE
+APROVADO
+REPROVADO
+CANCELADO</code></pre>
+                <p>O profiling consegue ajudar a descobrir o que existe.</p>
+                <p>Mas a regra de negócio precisa vir de algum lugar.</p>
+                <p>
+                  Por isso prefiro que a primeira versão das regras seja
+                  determinística e explícita.
+                </p>
+
+                <h4>Algumas regras são genéricas</h4>
+                <p>Existem validações que fazem sentido em muitos contextos:</p>
+                <pre><code>Obrigatório
+Único
+Comprimento
+Numérico
+Intervalo numérico
+Valores permitidos
+Data válida
+Expressão regular
+E-mail válido
+CPF válido</code></pre>
+                <p>Então posso configurar:</p>
+                <pre><code>NOTA
+
+Regra:
+Intervalo numérico
+
+Mínimo: 0
+Máximo: 10</code></pre>
+                <p>ou:</p>
+                <pre><code>TURNO
+
+Valores permitidos:
+
+MATUTINO
+VESPERTINO
+NOTURNO</code></pre>
+                <p>O Valtron não precisa conhecer o sistema que gerou o arquivo.</p>
+                <p>Ele só precisa saber executar a regra.</p>
+
+                <h4>Datas mostraram um caso interessante</h4>
+                <p>Durante os testes encontrei valores como:</p>
+                <pre><code>33639</code></pre>
+                <p>em uma coluna de data de nascimento.</p>
+                <p>Uma validação configurada para:</p>
+                <pre><code>YYYY/MM/DD</code></pre>
+                <p>naturalmente considera <code>33639</code> inválido.</p>
+                <p>
+                  Só que esse número pode representar uma data no sistema de
+                  datas do Excel.
+                </p>
+                <p>Isso mostrou outro cuidado importante.</p>
+                <p>Uma regra precisa saber distinguir:</p>
+                <pre><code>valor armazenado</code></pre>
+                <p>de:</p>
+                <pre><code>valor interpretado</code></pre>
+                <p>O Valtron pode reconhecer:</p>
+                <pre><code>33639
+↓
+Serial de data do Excel
+↓
+data válida</code></pre>
+                <p>sem alterar o <code>33639</code> original.</p>
+                <p>
+                  Essa separação entre <strong>interpretar, validar e
+                  transformar</strong> começou a aparecer várias vezes durante o
+                  desenvolvimento.
+                </p>
+
+                <h4>Uma linha pode quebrar várias regras</h4>
+                <p>
+                  Outro problema interessante apareceu quando comecei a pensar
+                  no score de qualidade.
+                </p>
+                <p>Imagine:</p>
+                <pre><code>CPF = ""</code></pre>
+                <p>Esse registro pode violar:</p>
+                <pre><code>Obrigatório
+Comprimento = 11
+CPF válido</code></pre>
+                <p>Se simplesmente somarmos todas as violações, teremos três problemas.</p>
+                <p>Mas existe apenas <strong>uma linha problemática</strong>.</p>
+                <p>Então existem duas métricas diferentes:</p>
+                <pre><code>Violações de regras</code></pre>
+                <p>e:</p>
+                <pre><code>Registros com pelo menos um problema</code></pre>
+                <p>Isso importa bastante para calcular um indicador geral.</p>
+                <p>Imagine:</p>
+                <pre><code>604.270 registros
+
+36.281 possuem pelo menos
+um problema</code></pre>
+                <p>O score pode ser calculado sobre as linhas válidas:</p>
+                <pre><code>567.989 / 604.270
+
+≈ 94%</code></pre>
+                <p>Sem contar a mesma linha três ou quatro vezes.</p>
+
+                <h4>O número sozinho também pode enganar</h4>
+                <p>Mostrar:</p>
+                <pre><code>Qualidade: 99%</code></pre>
+                <p>parece excelente.</p>
+                <p>Mas em uma base com 4 milhões de registros, 1% significa:</p>
+                <pre><code>40.000 registros</code></pre>
+                <p>Por isso quero evitar depender apenas de cores ou percentuais.</p>
+                <p>Prefiro algo como:</p>
+                <pre><code>QUALIDADE
+
+99%
+
+4.000.000 registros
+40.000 com problemas</code></pre>
+                <p>Percentual fornece proporção.</p>
+                <p>Quantidade fornece dimensão.</p>
+                <p>Os dois juntos contam melhor a história.</p>
+
+                <h4>Clicar no problema precisa mostrar o problema</h4>
+                <p>
+                  Assim como no profiling, quero evitar um painel que apenas
+                  apresenta números.
+                </p>
+                <p>Se o Valtron disser:</p>
+                <pre><code>CPF inválido
+18.011 violações</code></pre>
+                <p>esse número precisa ser clicável.</p>
+                <p>O fluxo:</p>
+                <pre><code>CPF inválido
+18.011
+    ↓
+clique
+    ↓
+grid filtrada
+    ↓
+18.011 registros</code></pre>
+                <p>
+                  A mesma condição utilizada para contar as violações precisa
+                  ser usada para filtrar a grid.
+                </p>
+                <p>
+                  Isso parece detalhe de implementação, mas evita uma situação
+                  bastante ruim:
+                </p>
+                <pre><code>Painel:
+18.011 problemas
+
+Grid:
+17.982 registros</code></pre>
+                <p>
+                  Quando uma ferramenta analisa qualidade de dados, os próprios
+                  resultados dela precisam ser confiáveis.
+                </p>
+
+                <h4>Encontrar não significa corrigir</h4>
+                <p>Essa talvez seja a separação mais importante até agora.</p>
+                <p>Se o Valtron encontrar:</p>
+                <pre><code>12.391 CPFs com pontuação</code></pre>
+                <p>ele não deveria simplesmente alterar:</p>
+                <pre><code>030.004.845-90</code></pre>
+                <p>para:</p>
+                <pre><code>03000484590</code></pre>
+                <p>Só porque parece uma correção óbvia.</p>
+                <p>Primeiro:</p>
+                <pre><code>IDENTIFICAR</code></pre>
+                <p>Depois:</p>
+                <pre><code>VALIDAR</code></pre>
+                <p>E somente com intenção explícita:</p>
+                <pre><code>TRANSFORMAR</code></pre>
+                <p>
+                  Essa separação ajuda a evitar que uma ferramenta criada para
+                  analisar dados acabe modificando silenciosamente aquilo que
+                  deveria apenas investigar.
+                </p>
+
+                <h4>O fluxo começou a ficar mais claro</h4>
+                <p>
+                  Com Data Quality, comecei a enxergar o Valtron menos como um
+                  visualizador de arquivos e mais como uma ferramenta de
+                  preparação de dados.
+                </p>
+                <p>O fluxo está ficando assim:</p>
+                <pre><code>ARQUIVO
+   ↓
+IMPORTAR
+   ↓
+EXPLORAR
+   ↓
+PROFILE
+   ↓
+"O que existe?"
+   ↓
+QUALITY
+   ↓
+"O que está errado?"
+   ↓
+TRANSFORM
+   ↓
+"Como quero corrigir?"
+   ↓
+EXPORTAR</code></pre>
+                <p>Cada etapa tem uma responsabilidade.</p>
+                <p>E isso leva naturalmente ao próximo problema.</p>
+                <p>
+                  Se eu descubro que existem 12 mil datas em serial do Excel, 8
+                  mil CPFs sem padding e milhares de nomes com espaços extras,
+                  <strong>como corrigir tudo isso sem editar milhares de células
+                  manualmente?</strong>
+                </p>
+                <p>É aí que entram as transformações em massa.</p>
+                <p>
+                  No próximo post vou falar sobre como estou trabalhando em
+                  <strong>Data Preparation no Valtron, usando preview antes de
+                  modificar milhares de registros e mantendo a possibilidade de
+                  desfazer as transformações</strong>.
+                </p>
+              </article>
+
+              <article id="post-data-preparation" class="post-card post-prose">
+                <div class="post-meta">
+                  <span>Data Preparation</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <a class="post-permalink" href="#post-data-preparation">Link desta postagem</a>
+                <h3>Data Preparation: corrigindo milhares de registros sem editar célula por célula</h3>
+                <p>
+                  Nos últimos posts falei sobre duas etapas que comecei a
+                  separar no Valtron.
+                </p>
+                <p>
+                  O <strong>Data Profiling</strong> ajuda a entender o que
+                  existe nos dados.
+                </p>
+                <p>
+                  O <strong>Data Quality</strong> permite definir o que é
+                  considerado válido.
+                </p>
+                <p>Depois disso aparece uma pergunta inevitável:</p>
+                <blockquote>Encontrei milhares de problemas. E agora?</blockquote>
+                <p>Editar registro por registro obviamente não é uma boa solução.</p>
+                <p>
+                  Foi daí que comecei a trabalhar em uma nova etapa do Valtron:
+                  <strong>Data Preparation</strong>.
+                </p>
+
+                <h4>Encontrar o problema é apenas metade do trabalho</h4>
+                <p>Imagine importar uma planilha com 600 mil registros.</p>
+                <p>
+                  Depois do profiling e das regras de qualidade, encontro algo
+                  assim:
+                </p>
+                <pre><code>CPF
+
+12.391 valores com formatação
+8.291 valores com menos de 11 dígitos
+2.182 duplicidades
+
+DATA_NASCIMENTO
+
+14.320 valores em serial do Excel
+
+NOME
+
+32.817 valores com espaços extras</code></pre>
+                <p>O Valtron já consegue me ajudar a localizar esses registros.</p>
+                <p>Mas imagine corrigir:</p>
+                <pre><code>32.817 nomes</code></pre>
+                <p>manualmente.</p>
+                <p>Não faz sentido.</p>
+                <p>Se o problema segue um padrão, a correção também pode seguir.</p>
+
+                <h4>Algumas transformações são simples</h4>
+                <p>Considere:</p>
+                <pre><code>"  JOÃO DA SILVA  "</code></pre>
+                <p>Quero transformar em:</p>
+                <pre><code>"JOÃO DA SILVA"</code></pre>
+                <p>É basicamente um <code>TRIM</code>.</p>
+                <p>Outro exemplo:</p>
+                <pre><code>030.004.845-90</code></pre>
+                <p>Quero:</p>
+                <pre><code>03000484590</code></pre>
+                <p>Ou:</p>
+                <pre><code>33639</code></pre>
+                <p>que foi identificado como serial de data do Excel e quero transformar para:</p>
+                <pre><code>05/02/1992</code></pre>
+                <p>Essas operações são determinísticas.</p>
+                <p>O problema não é saber executá-las.</p>
+                <p>
+                  O problema é executá-las com segurança sobre centenas de
+                  milhares de registros.
+                </p>
+
+                <h4>Eu não queria um botão mágico de corrigir</h4>
+                <p>Uma das primeiras decisões dessa funcionalidade foi evitar algo assim:</p>
+                <pre><code>12.391 problemas encontrados
+
+[ Corrigir tudo ]</code></pre>
+                <p>Parece conveniente.</p>
+                <p>
+                  Também é uma ótima maneira de descobrir depois que milhares de
+                  registros foram modificados de uma forma que você não
+                  esperava.
+                </p>
+                <p>Por isso estou usando outro fluxo:</p>
+                <pre><code>CONFIGURAR
+    ↓
+PREVIEW
+    ↓
+VER IMPACTO
+    ↓
+CONFIRMAR
+    ↓
+APLICAR</code></pre>
+                <p>Antes de alterar os dados, o Valtron mostra o que pretende fazer.</p>
+
+                <h4>Preview antes da transformação</h4>
+                <p>Imagine que eu queira remover a pontuação dos CPFs.</p>
+                <p>Antes de executar:</p>
+                <pre><code>NORMALIZAR CPF
+
+Original             Resultado
+────────────────────────────────
+030.004.845-90       03000484590
+123.456.789-00       12345678900
+987.654.321-00       98765432100
+
+604.270 registros analisados
+598.421 serão alterados
+5.849 permanecerão iguais
+
+[ Cancelar ]    [ Aplicar ]</code></pre>
+                <p>Agora existe uma diferença importante.</p>
+                <p>Eu não estou apenas dizendo:</p>
+                <blockquote>remova os pontos.</blockquote>
+                <p>
+                  Estou vendo exemplos reais e a quantidade de dados que será
+                  afetada.
+                </p>
+                <p>Só depois disso a transformação é aplicada.</p>
+
+                <h4>Algumas transformações podem falhar</h4>
+                <p>Considere a conversão de datas.</p>
+                <p>Tenho:</p>
+                <pre><code>33639
+34122
+ABC
+35001</code></pre>
+                <p>Quero converter os seriais do Excel.</p>
+                <p>O preview poderia mostrar:</p>
+                <pre><code>Original        Resultado
+──────────────────────────
+33639           05/02/1992
+34122           data convertida
+ABC             ⚠ não convertido
+35001           data convertida</code></pre>
+                <p>
+                  Nesse caso, também preciso decidir o que acontece com
+                  <code>ABC</code>.
+                </p>
+                <p>Algumas opções seriam:</p>
+                <pre><code>Manter o valor original
+Transformar em vazio
+Cancelar a operação inteira</code></pre>
+                <p>A escolha padrão que estou adotando é a mais conservadora:</p>
+                <p>
+                  <strong>se não consigo converter com segurança, mantenho o
+                  valor original.</strong>
+                </p>
+                <p>
+                  Perder um dado silenciosamente seria pior do que deixar uma
+                  inconsistência para ser investigada.
+                </p>
+
+                <h4>Transformação não é validação</h4>
+                <p>Essa separação continua sendo importante.</p>
+                <p>Considere:</p>
+                <pre><code>3000484590</code></pre>
+                <p>Posso criar uma transformação:</p>
+                <pre><code>preencher com zeros à esquerda
+até atingir 11 caracteres</code></pre>
+                <p>Resultado:</p>
+                <pre><code>03000484590</code></pre>
+                <p>Isso não significa que acabei de criar um CPF válido.</p>
+                <p>Significa apenas que executei uma transformação de texto.</p>
+                <p>Depois disso, a regra:</p>
+                <pre><code>CPF válido</code></pre>
+                <p>é responsável por verificar os dígitos.</p>
+                <p>O fluxo correto é:</p>
+                <pre><code>3000484590
+     ↓
+TRANSFORMAÇÃO
+     ↓
+03000484590
+     ↓
+QUALITY
+     ↓
+CPF válido?</code></pre>
+                <p>
+                  Não quero que uma transformação finja conhecer uma regra de
+                  negócio que não pertence a ela.
+                </p>
+
+                <h4>O DuckDB continua fazendo o trabalho pesado</h4>
+                <p>
+                  Aqui apareceu novamente uma decisão que já usei em outras
+                  partes do Valtron.
+                </p>
+                <p>Para remover espaços de 600 mil nomes, eu poderia fazer:</p>
+                <pre><code>DuckDB
+   ↓
+buscar 600 mil valores
+   ↓
+Rust
+   ↓
+for
+   ↓
+alterar cada registro</code></pre>
+                <p>Mas isso seria transportar uma quantidade enorme de dados sem necessidade.</p>
+                <p>O DuckDB já sabe executar:</p>
+                <pre><code>UPDATE documento
+SET nome = TRIM(nome);</code></pre>
+                <p>Então a arquitetura continua seguindo o mesmo princípio:</p>
+                <blockquote>
+                  levar a operação até os dados, em vez de levar todos os dados
+                  até a operação.
+                </blockquote>
+                <p>O Rust coordena e valida a transformação.</p>
+                <p>O DuckDB executa a operação em massa.</p>
+                <p>A interface recebe apenas informações como:</p>
+                <pre><code>598.421 valores alterados
+347 não puderam ser convertidos
+tempo total: ...</code></pre>
+
+                <h4>Preview e execução precisam falar a mesma língua</h4>
+                <p>Aqui encontrei um detalhe de arquitetura que considero importante.</p>
+                <p>Imagine que o preview utilize uma implementação:</p>
+                <pre><code>valor
+↓
+função A
+↓
+resultado</code></pre>
+                <p>mas, ao clicar em Aplicar, outra implementação seja usada:</p>
+                <pre><code>valor
+↓
+função B
+↓
+resultado</code></pre>
+                <p>
+                  Mesmo que as duas tentem fazer a mesma coisa, eventualmente
+                  alguma diferença vai aparecer.
+                </p>
+                <p>
+                  O usuário verá uma coisa no preview e receberá outra depois de
+                  confirmar.
+                </p>
+                <p>
+                  Por isso o preview e a aplicação precisam partir da
+                  <strong>mesma definição de transformação</strong>.
+                </p>
+                <p>Conceitualmente:</p>
+                <pre><code>Transformação:
+TRIM(nome)
+
+       ├───────────────┐
+       ↓               ↓
+    PREVIEW          APPLY
+       ↓               ↓
+SELECT TRIM()      UPDATE ... TRIM()</code></pre>
+                <p>A representação muda.</p>
+                <p>A regra da transformação não.</p>
+
+                <h4>As primeiras operações são propositalmente simples</h4>
+                <p>Não comecei tentando construir uma linguagem inteira de transformação.</p>
+                <p>As primeiras operações são coisas como:</p>
+                <pre><code>Trim
+Uppercase
+Lowercase
+Localizar e substituir
+Remover caracteres
+Preencher zeros à esquerda
+Converter serial Excel para data</code></pre>
+                <p>
+                  São pequenas operações, mas combinadas conseguem resolver uma
+                  quantidade grande de problemas reais.
+                </p>
+                <p>Por exemplo:</p>
+                <pre><code>CPF
+
+030.004.845-90
+      ↓
+remover pontuação
+      ↓
+03000484590
+      ↓
+preencher zeros se necessário
+      ↓
+validar CPF</code></pre>
+                <p>
+                  A sequência começa a ficar mais interessante que cada operação
+                  isolada.
+                </p>
+
+                <h4>E então apareceu outro problema: desfazer</h4>
+                <p>Imagine executar:</p>
+                <pre><code>TRIM(nome)</code></pre>
+                <p>em 400 mil registros.</p>
+                <p>Depois perceber que não era exatamente aquilo que queria.</p>
+                <p>Em uma edição manual, <code>Ctrl + Z</code> parece óbvio.</p>
+                <p>
+                  Em uma transformação que alterou centenas de milhares de
+                  registros dentro do DuckDB, a história muda.
+                </p>
+                <p>Algumas operações nem sequer possuem uma inversão segura.</p>
+                <p>Considere:</p>
+                <pre><code>joão da Silva
+↓
+UPPERCASE
+↓
+JOÃO DA SILVA</code></pre>
+                <p>
+                  Como descobrir depois exatamente quais letras eram
+                  originalmente maiúsculas?
+                </p>
+                <p>Não dá.</p>
+                <p>Fazer:</p>
+                <pre><code>LOWERCASE</code></pre>
+                <p>não desfaz <code>UPPERCASE</code>.</p>
+                <p>Produz outro dado.</p>
+                <p>Por isso comecei a registrar <strong>deltas das transformações</strong>.</p>
+                <p>
+                  A ideia é guardar informação suficiente sobre aquilo que
+                  realmente mudou:
+                </p>
+                <pre><code>linha
+valor anterior
+valor novo</code></pre>
+                <p>
+                  Assim o Undo não precisa tentar calcular a transformação
+                  inversa.
+                </p>
+                <p>Ele restaura o estado anterior.</p>
+
+                <h4>Delta ou snapshot?</h4>
+                <p>Essa decisão trouxe outra pergunta interessante.</p>
+                <p>Se uma transformação modifica:</p>
+                <pre><code>100 registros</code></pre>
+                <p>guardar os valores anteriores parece barato.</p>
+                <p>Mas e se modificar:</p>
+                <pre><code>600.000 registros?</code></pre>
+                <p>
+                  Talvez guardar centenas de milhares de deltas deixe de ser a
+                  melhor estratégia.
+                </p>
+                <p>
+                  Outra possibilidade é criar algum tipo de
+                  snapshot/versionamento do documento antes da transformação.
+                </p>
+                <p>Então existem duas abordagens:</p>
+                <pre><code>DELTA
+
+guardar somente
+o que mudou</code></pre>
+                <p>versus:</p>
+                <pre><code>SNAPSHOT
+
+guardar uma versão
+do estado anterior</code></pre>
+                <p>Não quero decidir isso apenas pela aparência da arquitetura.</p>
+                <p>Quero medir.</p>
+                <p>
+                  O próximo passo nessa parte é justamente comparar as duas
+                  estratégias com volumes diferentes e observar:
+                </p>
+                <pre><code>tempo para aplicar
+espaço utilizado
+tempo para desfazer
+impacto no DuckDB</code></pre>
+                <p>Com 10 mil registros uma estratégia pode vencer.</p>
+                <p>Com 1 milhão, talvez a resposta seja outra.</p>
+
+                <h4>O histórico começa a formar algo maior</h4>
+                <p>
+                  Quando comecei a registrar as transformações, percebi que o
+                  histórico poderia representar algo assim:
+                </p>
+                <pre><code>alunos.xlsx
+
+1. TRIM(nome)
+2. Remover pontuação(cpf)
+3. Preencher zeros(cpf, 11)
+4. Serial Excel → Data(nascimento)</code></pre>
+                <p>Isso não é apenas histórico.</p>
+                <p>É praticamente uma <strong>receita de preparação de dados</strong>.</p>
+                <p>E essa ideia abre uma possibilidade que considero bem interessante.</p>
+                <p>Imagine que todo mês eu receba um arquivo no mesmo formato.</p>
+                <p>Em agosto:</p>
+                <pre><code>alunos_agosto.xlsx</code></pre>
+                <p>Faço:</p>
+                <pre><code>TRIM nome
+↓
+normalizar CPF
+↓
+converter datas
+↓
+validar
+↓
+exportar</code></pre>
+                <p>No mês seguinte chega:</p>
+                <pre><code>alunos_setembro.xlsx</code></pre>
+                <p>Por que configurar tudo novamente?</p>
+                <p>Eu poderia salvar:</p>
+                <pre><code>Receita:
+Tratamento de alunos</code></pre>
+                <p>e aplicar sobre o próximo arquivo.</p>
+
+                <h4>É aqui que começa a aparecer um pipeline</h4>
+                <p>O fluxo deixa de ser apenas:</p>
+                <pre><code>abrir planilha
+↓
+editar
+↓
+salvar</code></pre>
+                <p>e começa a ficar:</p>
+                <pre><code>ENTRADA
+
+alunos_setembro.xlsx
+
+        ↓
+
+PREPARAÇÃO
+
+Trim
+Normalizar CPF
+Converter datas
+
+        ↓
+
+QUALITY
+
+Validar regras
+
+        ↓
+
+SAÍDA
+
+alunos_setembro_limpo.xlsx</code></pre>
+                <p>
+                  Isso já começa a se aproximar bastante de um pequeno pipeline
+                  de dados.
+                </p>
+                <p>Ainda local.</p>
+                <p>Ainda visual.</p>
+                <p>
+                  E sem exigir que o usuário escreva um script Python diferente
+                  para cada tratamento.
+                </p>
+
+                <h4>Mas não quero começar desenhando bloquinhos</h4>
+                <p>Seria tentador transformar isso imediatamente em uma interface cheia de nós:</p>
+                <pre><code>[XLSX]
+   ↓
+[TRIM]
+   ↓
+[CPF]
+   ↓
+[DATA]
+   ↓
+[QUALITY]
+   ↓
+[EXPORT]</code></pre>
+                <p>Visualmente fica interessante.</p>
+                <p>Mas existe uma pergunta mais importante:</p>
+                <blockquote>O motor por trás desses blocos funciona bem?</blockquote>
+                <p>Por isso estou seguindo outra ordem:</p>
+                <pre><code>Transformação individual
+        ↓
+Preview
+        ↓
+Aplicar
+        ↓
+Histórico
+        ↓
+Undo
+        ↓
+Receita
+        ↓
+Reutilização</code></pre>
+                <p>
+                  Se tudo isso estiver sólido, um editor visual no futuro será
+                  apenas outra maneira de representar um pipeline que já
+                  funciona.
+                </p>
+
+                <h4>O Valtron está mudando de categoria</h4>
+                <p>
+                  Quando comecei o projeto, eu pensava principalmente em:
+                </p>
+                <blockquote>trabalhar melhor com arquivos grandes.</blockquote>
+                <p>Hoje o fluxo está ficando mais próximo de:</p>
+                <pre><code>IMPORTAR
+   ↓
+EXPLORAR
+   ↓
+PROFILE
+   ↓
+QUALITY
+   ↓
+TRANSFORM
+   ↓
+REVALIDAR
+   ↓
+EXPORTAR</code></pre>
+                <p>
+                  Isso aproxima o Valtron de uma ferramenta local de
+                  <strong>Data Preparation e Data Quality</strong>.
+                </p>
+                <p>
+                  E talvez essa seja uma das partes que mais gosto na evolução
+                  do projeto.
+                </p>
+                <p>Não comecei tentando construir uma plataforma de ETL.</p>
+                <p>Comecei tentando abrir e trabalhar melhor com uma planilha grande.</p>
+                <p>Os próximos problemas foram aparecendo naturalmente.</p>
+                <p>
+                  E cada um deles acabou empurrando o projeto um pouco mais para
+                  o mundo de engenharia e preparação de dados.
+                </p>
+                <p>
+                  No próximo post quero falar justamente sobre essa evolução:
+                  <strong>quando uma sequência de transformações deixa de ser
+                  apenas um histórico e começa a virar uma receita reutilizável
+                  de dados.</strong>
+                </p>
+              </article>
             </div>
 
             <div class="post-list post-next post-index">
@@ -1942,6 +3633,42 @@ Exportar</code></pre>
                 </div>
                 <h3><a href="#post-duckdb-desktop">DuckDB dentro de uma aplicação desktop</a></h3>
                 <p>Banco embutido, local-first, SQL, profiling, quality e transformações.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 05</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-importar-como-texto">Por que o Valtron importa os dados como texto antes de tentar entendê-los</a></h3>
+                <p>Preservação do dado original, profiling, qualidade e transformações com intenção explícita.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 06</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-data-profiling-600-mil">Data Profiling: entendendo 600 mil registros sem escrever várias queries</a></h3>
+                <p>Estatísticas agregadas no DuckDB, tipo provável, distribuição e investigação por clique.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 07</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-data-quality">Data Quality: entender os dados não significa que eles estão corretos</a></h3>
+                <p>Regras explícitas, violações, score de qualidade e investigação dos registros problemáticos.</p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Post 08</span>
+                  <span>15 ago 2026</span>
+                </div>
+                <h3><a href="#post-data-preparation">Data Preparation: corrigindo milhares de registros sem editar célula por célula</a></h3>
+                <p>Preview, aplicação em massa no DuckDB, undo por deltas e receitas reutilizáveis.</p>
               </article>
             </div>
           </div>
