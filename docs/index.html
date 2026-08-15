@@ -337,6 +337,7 @@
         border-radius: 8px;
         background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.74));
         padding: 20px;
+        scroll-margin-top: 96px;
       }
 
       .post-card.featured {
@@ -366,6 +367,28 @@
         font-weight: 850;
         letter-spacing: 0.08em;
         text-transform: uppercase;
+      }
+
+      .post-permalink,
+      .blog-all-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: fit-content;
+        min-height: 32px;
+        border: 1px solid rgba(134, 239, 172, 0.28);
+        border-radius: 8px;
+        background: rgba(34, 197, 94, 0.08);
+        color: var(--accent-strong);
+        font-size: 0.8rem;
+        font-weight: 850;
+        padding: 5px 10px;
+      }
+
+      .post-permalink:hover,
+      .blog-all-link:hover {
+        border-color: var(--accent);
+        text-decoration: none;
       }
 
       .post-card h3 {
@@ -431,6 +454,23 @@
       .post-next {
         position: sticky;
         top: 96px;
+      }
+
+      .blog-single-tools {
+        display: none;
+      }
+
+      body.single-post-mode .blog-single-tools {
+        display: block;
+      }
+
+      body.single-post-mode .post-feed > .post-prose:not(:target) {
+        display: none;
+      }
+
+      body.single-post-mode .post-feed > .post-prose:target {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.28);
       }
 
       .post-index a {
@@ -847,6 +887,7 @@
                 <span>Desenvolvimento</span>
                 <span>15 ago 2026</span>
               </div>
+              <a class="post-permalink" href="#post-origem-valtron">Link desta postagem</a>
               <h3>Por que comecei a desenvolver o Valtron</h3>
               <p>
                 O Valtron começou a partir de um problema relativamente simples:
@@ -1005,6 +1046,7 @@ renderizar o que o usuário precisa ver</code></pre>
                 <span>Performance</span>
                 <span>15 ago 2026</span>
               </div>
+              <a class="post-permalink" href="#post-importacao-xlsx">Link desta postagem</a>
               <h3>Como carreguei mais de 600 mil registros em poucos segundos</h3>
               <p>
                 Um dos primeiros desafios que coloquei para o Valtron foi
@@ -1192,6 +1234,7 @@ Data provável</code></pre>
                   <span>Interface</span>
                   <span>15 ago 2026</span>
                 </div>
+                <a class="post-permalink" href="#post-grid-virtualizada">Link desta postagem</a>
                 <h3>Importar 600 mil linhas rápido não adianta se a interface travar</h3>
                 <p>
                 Nos primeiros testes do Valtron, boa parte da minha atenção
@@ -1495,6 +1538,7 @@ tela</code></pre>
                   <span>Arquitetura</span>
                   <span>15 ago 2026</span>
                 </div>
+                <a class="post-permalink" href="#post-duckdb-desktop">Link desta postagem</a>
                 <h3>DuckDB dentro de uma aplicação desktop: por que escolhi esse caminho no Valtron</h3>
                 <p>
                   Quando comecei o Valtron, uma das decisões mais importantes
@@ -1860,6 +1904,10 @@ Exportar</code></pre>
             </div>
 
             <div class="post-list post-next post-index">
+              <div class="blog-single-tools">
+                <a class="blog-all-link" href="#blog">Ver todas as postagens</a>
+              </div>
+
               <article class="post-card">
                 <div class="post-meta">
                   <span>Post 01</span>
@@ -1961,6 +2009,15 @@ Exportar</code></pre>
       const nextButton = document.querySelector("#modal-next");
       let currentSlide = 0;
 
+      function syncSinglePostMode() {
+        const id = window.location.hash.slice(1);
+        const target = id ? document.getElementById(id) : null;
+        document.body.classList.toggle(
+          "single-post-mode",
+          Boolean(target && target.classList.contains("post-prose")),
+        );
+      }
+
       function showSlide(index) {
         currentSlide = (index + slides.length) % slides.length;
         const slide = slides[currentSlide];
@@ -1991,6 +2048,8 @@ Exportar</code></pre>
       closeButton.addEventListener("click", closeModal);
       prevButton.addEventListener("click", () => showSlide(currentSlide - 1));
       nextButton.addEventListener("click", () => showSlide(currentSlide + 1));
+      window.addEventListener("hashchange", syncSinglePostMode);
+      syncSinglePostMode();
 
       modal.addEventListener("click", (event) => {
         if (event.target === modal) {
