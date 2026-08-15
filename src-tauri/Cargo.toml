@@ -1,6 +1,6 @@
 [package]
 name = "valtron"
-version = "0.1.5"
+version = "0.1.6"
 description = "Aplicativo desktop Valtron"
 authors = ["Valtron"]
 edition = "2021"
@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 calamine = "0.36.1"
 duckdb = { version = "1.10505.0", features = ["bundled", "appender-arrow"] }
 tauri-plugin-dialog = "2.7.2"

@@ -8,6 +8,22 @@ import {
   type UpdateInfo,
   type UpdateProgress,
 } from "./services/updater/updater.service";
+import { renderProfilingDrawer, profileHeaderHint } from "./profiling/profiling.drawer";
+import { getColumnProfile } from "./profiling/profiling.service";
+import { createProfilingState, ProfilingSessionCache } from "./profiling/profiling.state";
+import type { ColumnProfile, ProfilingState } from "./profiling/profiling.types";
+import {
+  createQualityRule,
+  deleteQualityRule,
+  listQualityRules,
+  updateQualityRule,
+  validateQualityRules,
+} from "./quality/quality.service";
+import { createQualityState } from "./quality/quality.state";
+import type { QualityRule, QualityRuleInput, QualityState } from "./quality/quality.types";
+import { applyTransformation, previewTransformation } from "./transformations/transformation.service";
+import { createTransformationState, defaultTransformationConfig } from "./transformations/transformation.state";
+import type { TransformationState, TransformationType } from "./transformations/transformation.types";
 import "./styles.css";
 
 type ImportSummary = {
@@ -77,7 +93,9 @@ type WorkspaceInfo = {
 
 type ColumnFilter = {
   column: string;
+  operator?: "contains" | "equals" | "empty" | "quality_violation";
   value: string;
+  rule_id?: string | null;
 };
 
 type ColumnQuality = {
@@ -199,7 +217,7 @@ let documents: DocumentInfo[] = [];
 let currentDocumentId: string | null = null;
 let sortColumn: string | null = null;
 let sortDirection: "asc" | "desc" | null = null;
-let filterValues = new Map<string, string>();
+let filterValues = new Map<string, ColumnFilter>();
 let filterTimer: number | undefined;
 let gridDetailsVisible = false;
 let sqlVisible = false;
@@ -209,7 +227,9 @@ let loadingCount = 0;
 let pendingCellFocus: CellPosition | null = null;
 let sidebarCollapsed = true;
 let openDocumentMenuId: string | null = null;
+let openColumnMenu: { column: string; index: number } | null = null;
 let documentMenuPosition = { top: 0, left: 0 };
+let columnMenuPosition = { top: 0, left: 0 };
 let editingWorkspaceId: string | null = null;
 let detailsDocumentId: string | null = null;
 let renameDocumentId: string | null = null;
@@ -241,6 +261,11 @@ let activePopoverMode: "selection" | "hover" | null = null;
 let resizeState: ResizeState | null = null;
 let measureContext: CanvasRenderingContext2D | null = null;
 let pendingCellOperations = new Map<string, number>();
+let profilingState: ProfilingState = createProfilingState();
+let qualityState: QualityState = createQualityState();
+let transformationState: TransformationState = createTransformationState();
+let profilingRequestSeq = 0;
+const profilingCache = new ProfilingSessionCache();
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -295,6 +320,7 @@ app.innerHTML = `
     </aside>
 
     <div id="document-action-menu" class="document-menu" role="menu"></div>
+    <div id="column-action-menu" class="column-menu" role="menu"></div>
 
     <div id="details-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="details-title">
       <section class="modal-panel">
@@ -595,6 +621,7 @@ app.innerHTML = `
         </div>
       </div>
     </section>
+    <div id="profiling-root" class="profiling-root hidden"></div>
     </section>
   </main>
 `;
@@ -613,6 +640,7 @@ const createWorkspaceButton = document.querySelector<HTMLButtonElement>("#create
 const documentsSubtitleEl = document.querySelector<HTMLParagraphElement>("#documents-subtitle");
 const documentsListEl = document.querySelector<HTMLDivElement>("#documents-list");
 const documentActionMenuEl = document.querySelector<HTMLDivElement>("#document-action-menu");
+const columnActionMenuEl = document.querySelector<HTMLDivElement>("#column-action-menu");
 const detailsModalEl = document.querySelector<HTMLDivElement>("#details-modal");
 const detailsContentEl = document.querySelector<HTMLDivElement>("#details-content");
 const closeDetailsButton = document.querySelector<HTMLButtonElement>("#close-details");
@@ -694,6 +722,7 @@ const nextButton = document.querySelector<HTMLButtonElement>("#next-page");
 const clearFiltersButton = document.querySelector<HTMLButtonElement>("#clear-filters");
 const openColumnsButton = document.querySelector<HTMLButtonElement>("#open-columns");
 const gridLoadingStatusEl = document.querySelector<HTMLSpanElement>("#grid-loading-status");
+const profilingRootEl = document.querySelector<HTMLDivElement>("#profiling-root");
 
 function setStatus(message: string) {
   if (statusEl) {
@@ -1130,9 +1159,12 @@ function detailsDocument() {
 }
 
 function activeFilters(): ColumnFilter[] {
-  return Array.from(filterValues.entries())
-    .filter(([, value]) => value.trim().length > 0)
-    .map(([column, value]) => ({ column, value: value.trim() }));
+  return Array.from(filterValues.values()).filter(
+    (filter) =>
+      filter.operator === "empty" ||
+      filter.operator === "quality_violation" ||
+      filter.value.trim().length > 0,
+  );
 }
 
 function columnVisibilityStorageKey(documentId: string) {
@@ -1388,7 +1420,81 @@ function cachedRow(rowIndex: number) {
 }
 
 function filterValue(column: string) {
-  return filterValues.get(column) ?? "";
+  const filter = filterValues.get(column);
+  return !filter || filter.operator === "empty" || filter.operator === "quality_violation" ? "" : filter.value;
+}
+
+function activeFilterLabel(column: string) {
+  const filter = filterValues.get(column);
+
+  if (!filter) {
+    return null;
+  }
+
+  if (filter.operator === "empty") {
+    return "Vazios";
+  }
+
+  if (filter.operator === "quality_violation") {
+    const rule = qualityState.rules.find((item) => item.id === filter.rule_id);
+    return rule ? `Violacoes: ${rule.name}` : "Violacoes de qualidade";
+  }
+
+  return filter.value;
+}
+
+function setContainsFilter(column: string, value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    filterValues.delete(column);
+    return;
+  }
+
+  filterValues.set(column, {
+    column,
+    operator: "contains",
+    value: trimmed,
+  });
+}
+
+function setEqualsFilter(column: string, value: string) {
+  filterValues.set(column, {
+    column,
+    operator: "equals",
+    value,
+  });
+}
+
+function setEmptyFilter(column: string) {
+  filterValues.set(column, {
+    column,
+    operator: "empty",
+    value: "",
+  });
+}
+
+function setQualityRuleFilter(rule: QualityRule) {
+  filterValues.set(rule.column_name, {
+    column: rule.column_name,
+    operator: "quality_violation",
+    value: "",
+    rule_id: rule.id,
+  });
+}
+
+function qualityHeaderHint(column: string) {
+  if (
+    profilingState.documentId === currentDocumentId &&
+    profilingState.column === column &&
+    qualityState.status === "ready" &&
+    qualityState.summary &&
+    qualityState.rules.length > 0
+  ) {
+    return `Qualidade ${formatNumber(Math.round(qualityState.summary.score))}%`;
+  }
+
+  return "";
 }
 
 function renameColumnInLocalState(oldColumn: string, newColumn: string) {
@@ -1396,7 +1502,10 @@ function renameColumnInLocalState(oldColumn: string, newColumn: string) {
 
   if (activeFilter !== undefined) {
     filterValues.delete(oldColumn);
-    filterValues.set(newColumn, activeFilter);
+    filterValues.set(newColumn, {
+      ...activeFilter,
+      column: newColumn,
+    });
   }
 
   if (sortColumn === oldColumn) {
@@ -1526,6 +1635,48 @@ function renderDocumentActionMenu() {
     </button>
   `;
   documentActionMenuEl.classList.add("open");
+}
+
+function setOpenColumnMenu(menu: { column: string; index: number } | null) {
+  openColumnMenu = menu;
+  renderColumnActionMenu();
+}
+
+function renderColumnActionMenu() {
+  if (!columnActionMenuEl) {
+    return;
+  }
+
+  if (!openColumnMenu || dataMode !== "document") {
+    columnActionMenuEl.classList.remove("open");
+    columnActionMenuEl.innerHTML = "";
+    return;
+  }
+
+  const column = openColumnMenu.column;
+  columnActionMenuEl.style.top = `${columnMenuPosition.top}px`;
+  columnActionMenuEl.style.left = `${columnMenuPosition.left}px`;
+  columnActionMenuEl.innerHTML = `
+    <button type="button" data-column-menu-action="sort-asc">Ordenar crescente</button>
+    <button type="button" data-column-menu-action="sort-desc">Ordenar decrescente</button>
+    <button type="button" data-column-menu-action="focus-filter">Filtrar</button>
+    <hr />
+    <button type="button" data-column-menu-action="profile">Analisar coluna</button>
+    <button type="button" data-column-menu-action="quality">Qualidade</button>
+    <button type="button" data-column-menu-action="transform">Transformar</button>
+    <hr />
+    <button type="button" data-column-menu-action="rename">Renomear</button>
+    <button type="button" data-column-menu-action="hide">Ocultar</button>
+  `;
+  columnActionMenuEl.classList.add("open");
+  columnActionMenuEl.setAttribute("aria-label", `Opcoes da coluna ${column}`);
+}
+
+function focusColumnFilter(column: string) {
+  const input = Array.from(
+    tableHeadEl?.querySelectorAll<HTMLInputElement>("[data-filter-column]") ?? [],
+  ).find((item) => item.dataset.filterColumn === column);
+  input?.focus();
 }
 
 function renderDetailsModal() {
@@ -1668,6 +1819,24 @@ async function saveRenameColumn() {
       newColumn,
     });
 
+    profilingCache.renameColumn(currentDocumentId, oldColumn, newColumn);
+    if (profilingState.documentId === currentDocumentId && profilingState.column === oldColumn) {
+      profilingState = {
+        ...profilingState,
+        column: newColumn,
+        profile: profilingState.profile ? { ...profilingState.profile, column: newColumn } : null,
+      };
+      qualityState = {
+        ...qualityState,
+        rules: qualityState.rules.map((rule) =>
+          rule.column_name === oldColumn ? { ...rule, column_name: newColumn } : rule,
+        ),
+        summary: qualityState.summary
+          ? { ...qualityState.summary, column_name: newColumn }
+          : qualityState.summary,
+      };
+      renderProfiling();
+    }
     renameColumnInLocalState(oldColumn, newColumn);
     closeRenameColumn();
     await loadPage(currentOffset);
@@ -1925,7 +2094,7 @@ async function setColumnVisible(column: string, visible: boolean) {
       return;
     }
 
-    const hadActiveFilter = filterValue(column).trim().length > 0;
+    const hadActiveFilter = Boolean(filterValues.get(column));
     const hadActiveSort = sortColumn === column;
     hiddenColumns.add(column);
     filterValues.delete(column);
@@ -2376,7 +2545,20 @@ async function commitActiveCellEdit(renderOnNoop = true) {
 
     pendingCellOperations.delete(operationKey);
     recentCellUpdates.set(operationKey, Date.now() + 1200);
+    profilingCache.invalidate(currentDocumentId, edit.columnName);
+    if (profilingState.documentId === currentDocumentId && profilingState.column === edit.columnName) {
+      qualityState = {
+        ...qualityState,
+        status: qualityState.rules.length ? "loading" : "ready",
+        summary: null,
+        error: null,
+      };
+      loadQualityForColumn(currentDocumentId, edit.columnName, true).catch((error) => setStatus(String(error)));
+    }
     activeCellEdit = null;
+    if (filterValues.get(edit.columnName)?.operator === "quality_violation") {
+      await loadPage(currentOffset);
+    }
     renderVirtualRows();
     window.setTimeout(() => {
       if ((recentCellUpdates.get(operationKey) ?? 0) <= Date.now()) {
@@ -2573,6 +2755,494 @@ function renderWorkspaces() {
     .join("");
 }
 
+function renderProfiling() {
+  if (!profilingRootEl) {
+    return;
+  }
+
+  renderProfilingDrawer(profilingRootEl, profilingState, qualityState, transformationState, {
+    onClose: closeProfilingDrawer,
+    onRetry: (column) => {
+      openColumnProfile(column).catch((error) => setStatus(String(error)));
+    },
+    onFilterValue: (column, value) => {
+      applyProfileValueFilter(column, value).catch((error) => setStatus(String(error)));
+    },
+    onFilterEmpty: (column) => {
+      applyProfileEmptyFilter(column).catch((error) => setStatus(String(error)));
+    },
+    activeFilterLabel,
+    onTabChange: (tab) => {
+      profilingState = {
+        ...profilingState,
+        activeTab: tab,
+      };
+      renderProfiling();
+      if (tab === "quality" && profilingState.documentId && profilingState.column) {
+        loadQualityForColumn(profilingState.documentId, profilingState.column).catch((error) =>
+          setStatus(String(error)),
+        );
+      }
+    },
+    quality: {
+      onAddRule: () => {
+        qualityState = { ...qualityState, mode: "form", editingRule: null };
+        renderProfiling();
+      },
+      onCancelForm: () => {
+        qualityState = { ...qualityState, mode: "list", editingRule: null };
+        renderProfiling();
+      },
+      onSaveRule: (input, ruleId) => {
+        saveQualityRule(input, ruleId).catch((error) => setStatus(String(error)));
+      },
+      onEditRule: (rule) => {
+        qualityState = { ...qualityState, mode: "form", editingRule: rule };
+        renderProfiling();
+      },
+      onToggleRule: (rule) => {
+        toggleQualityRule(rule).catch((error) => setStatus(String(error)));
+      },
+      onDeleteRule: (rule) => {
+        removeQualityRule(rule).catch((error) => setStatus(String(error)));
+      },
+      onApplyRuleFilter: (rule) => {
+        applyQualityRuleFilter(rule).catch((error) => setStatus(String(error)));
+      },
+      onRetryQuality: () => {
+        if (profilingState.documentId && profilingState.column) {
+          loadQualityForColumn(profilingState.documentId, profilingState.column, true).catch((error) =>
+            setStatus(String(error)),
+          );
+        }
+      },
+    },
+    transformation: {
+      onSelectType: (type) => {
+        transformationState = {
+          ...createTransformationState(),
+          selectedType: type,
+          configuration: defaultTransformationConfig(type),
+        };
+        renderProfiling();
+      },
+      onConfigChange: (key, value) => {
+        transformationState = {
+          ...transformationState,
+          configuration: {
+            ...transformationState.configuration,
+            [key]: value,
+          },
+          status: "idle",
+          preview: null,
+          applied: null,
+          error: null,
+        };
+        renderProfilingPreservingTransformField(key);
+      },
+      onPreview: () => {
+        previewCurrentTransformation().catch((error) => setStatus(String(error)));
+      },
+      onApply: () => {
+        applyCurrentTransformation().catch((error) => setStatus(String(error)));
+      },
+    },
+  });
+}
+
+function renderProfilingPreservingTransformField(fieldKey: string) {
+  if (!profilingRootEl) {
+    return;
+  }
+
+  const drawer = profilingRootEl.querySelector<HTMLElement>(".profile-drawer");
+  const active = document.activeElement;
+  const activeConfig =
+    active instanceof HTMLInputElement || active instanceof HTMLSelectElement
+      ? active.dataset.transformConfig
+      : null;
+  const selection =
+    active instanceof HTMLInputElement
+      ? {
+          start: active.selectionStart,
+          end: active.selectionEnd,
+        }
+      : null;
+  const scrollTop = drawer?.scrollTop ?? 0;
+  const restoreKey = activeConfig ?? fieldKey;
+
+  renderProfiling();
+
+  const nextDrawer = profilingRootEl.querySelector<HTMLElement>(".profile-drawer");
+  if (nextDrawer) {
+    nextDrawer.scrollTop = scrollTop;
+  }
+
+  const nextField = profilingRootEl.querySelector<HTMLInputElement | HTMLSelectElement>(
+    `[data-transform-config="${CSS.escape(restoreKey)}"]`,
+  );
+
+  if (!nextField) {
+    return;
+  }
+
+  nextField.focus({ preventScroll: true });
+  if (selection && nextField instanceof HTMLInputElement && nextField.type !== "checkbox") {
+    const length = nextField.value.length;
+    nextField.setSelectionRange(
+      Math.min(selection.start ?? length, length),
+      Math.min(selection.end ?? length, length),
+    );
+  }
+
+  if (nextDrawer) {
+    nextDrawer.scrollTop = scrollTop;
+  }
+}
+
+function closeProfilingDrawer() {
+  profilingState = createProfilingState();
+  qualityState = createQualityState();
+  transformationState = createTransformationState();
+  profilingRequestSeq += 1;
+  renderProfiling();
+}
+
+function currentTransformationPayload() {
+  if (!profilingState.column || !transformationState.selectedType) {
+    return null;
+  }
+
+  return {
+    type: transformationState.selectedType,
+    column: profilingState.column,
+    configuration: transformationState.configuration,
+  };
+}
+
+async function previewCurrentTransformation() {
+  if (!currentDocumentId) {
+    setStatus("Selecione um documento para transformar.");
+    return;
+  }
+
+  const transformation = currentTransformationPayload();
+  if (!transformation) {
+    setStatus("Selecione uma transformacao.");
+    return;
+  }
+
+  transformationState = {
+    ...transformationState,
+    status: "previewing",
+    preview: null,
+    applied: null,
+    error: null,
+  };
+  renderProfiling();
+  setStatus("Calculando preview da transformacao...");
+
+  try {
+    const preview = await previewTransformation(currentDocumentId, transformation);
+    transformationState = {
+      ...transformationState,
+      status: "ready",
+      preview,
+      error: null,
+    };
+    renderProfiling();
+    setStatus(`${formatNumber(preview.affected_rows)} registros serao alterados.`);
+  } catch (error) {
+    transformationState = {
+      ...transformationState,
+      status: "error",
+      error: String(error),
+    };
+    renderProfiling();
+    setStatus(String(error));
+  }
+}
+
+async function applyCurrentTransformation() {
+  if (!currentDocumentId) {
+    setStatus("Selecione um documento para transformar.");
+    return;
+  }
+
+  const transformation = currentTransformationPayload();
+  if (!transformation || !transformationState.preview) {
+    setStatus("Gere o preview antes de aplicar.");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Aplicar transformacao em ${formatNumber(transformationState.preview.affected_rows)} registros?`,
+  );
+  if (!confirmed) return;
+
+  transformationState = {
+    ...transformationState,
+    status: "applying",
+    error: null,
+  };
+  renderProfiling();
+  setStatus("Aplicando transformacao...");
+
+  try {
+    const applied = await applyTransformation(currentDocumentId, transformation);
+    profilingCache.invalidate(currentDocumentId, transformation.column);
+    qualityState = {
+      ...qualityState,
+      status: qualityState.rules.length ? "idle" : qualityState.status,
+      summary: null,
+      error: null,
+    };
+    transformationState = {
+      ...transformationState,
+      status: "applied",
+      applied,
+      error: null,
+    };
+    resetGridCache();
+    await loadPage(0);
+    renderProfiling();
+    setStatus(
+      `Transformacao aplicada: ${formatNumber(applied.affected_rows)} alterados, ${formatNumber(applied.failed_rows)} invalidos.`,
+    );
+  } catch (error) {
+    transformationState = {
+      ...transformationState,
+      status: "error",
+      error: String(error),
+    };
+    renderProfiling();
+    setStatus(String(error));
+  }
+}
+
+async function loadQualityForColumn(documentId: string, column: string, force = false) {
+  if (!force && qualityState.status === "ready" && profilingState.documentId === documentId && profilingState.column === column) {
+    return;
+  }
+
+  qualityState = {
+    ...qualityState,
+    status: "loading",
+    error: null,
+  };
+  renderProfiling();
+
+  try {
+    const rules = await listQualityRules(documentId, column);
+    const summary = rules.length ? await validateQualityRules(documentId, column) : null;
+    const activeRuleId = filterValues.get(column)?.operator === "quality_violation"
+      ? filterValues.get(column)?.rule_id ?? null
+      : null;
+    qualityState = {
+      ...qualityState,
+      status: "ready",
+      mode: "list",
+      rules,
+      summary,
+      error: null,
+      appliedRuleId: activeRuleId,
+    };
+    renderProfiling();
+    renderTable(currentPage);
+  } catch (error) {
+    qualityState = {
+      ...qualityState,
+      status: "error",
+      error: String(error),
+    };
+    renderProfiling();
+  }
+}
+
+async function openColumnProfile(column: string) {
+  if (dataMode !== "document" || !currentDocumentId) {
+    setStatus("Profiling disponivel apenas para documentos importados.");
+    return;
+  }
+
+  const documentId = currentDocumentId;
+  const requestSeq = ++profilingRequestSeq;
+  const cached = profilingCache.get(documentId, column);
+
+  profilingState = cached
+    ? {
+        status: "ready",
+        activeTab: profilingState.activeTab,
+        documentId,
+        column,
+        profile: cached,
+        error: null,
+      }
+    : {
+        status: "loading",
+        activeTab: profilingState.activeTab,
+        documentId,
+        column,
+        profile: null,
+        error: null,
+  };
+  qualityState = createQualityState();
+  transformationState = createTransformationState();
+  setOpenColumnMenu(null);
+  renderProfiling();
+
+  if (cached) {
+    if (profilingState.activeTab === "quality") {
+      loadQualityForColumn(documentId, column).catch((error) => setStatus(String(error)));
+    }
+    setStatus("Profiling carregado do cache da sessao.");
+    return;
+  }
+
+  try {
+    const profile = await getColumnProfile(documentId, column);
+
+    if (requestSeq !== profilingRequestSeq || profilingState.documentId !== documentId || profilingState.column !== column) {
+      return;
+    }
+
+    profilingCache.set(documentId, column, profile);
+    profilingState = {
+      status: "ready",
+      activeTab: profilingState.activeTab,
+      documentId,
+      column,
+      profile,
+      error: null,
+    };
+    renderProfiling();
+    renderTable(currentPage);
+    if (profilingState.activeTab === "quality") {
+      loadQualityForColumn(documentId, column).catch((error) => setStatus(String(error)));
+    }
+    setStatus(profile.performance.cache_hit ? "Profiling carregado do cache." : "Profiling concluido.");
+  } catch (error) {
+    if (requestSeq !== profilingRequestSeq) {
+      return;
+    }
+
+    profilingState = {
+      status: "error",
+      activeTab: profilingState.activeTab,
+      documentId,
+      column,
+      profile: null,
+      error: String(error),
+    };
+    renderProfiling();
+  }
+}
+
+async function applyProfileValueFilter(column: string, value: string) {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
+  setEqualsFilter(column, value);
+  renderProfiling();
+  await loadPage(0);
+  setStatus(`Filtro aplicado em ${column}.`);
+}
+
+async function applyProfileEmptyFilter(column: string) {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
+  setEmptyFilter(column);
+  renderProfiling();
+  await loadPage(0);
+  setStatus(`Filtro de vazios aplicado em ${column}.`);
+}
+
+async function saveQualityRule(input: QualityRuleInput, ruleId: string | null) {
+  if (!currentDocumentId || !profilingState.column) {
+    setStatus("Selecione uma coluna para configurar qualidade.");
+    return;
+  }
+
+  if (!input.name) {
+    setStatus("Digite um nome para a regra.");
+    return;
+  }
+
+  setStatus(ruleId ? "Atualizando regra..." : "Salvando regra...");
+  if (ruleId) {
+    await updateQualityRule(ruleId, input);
+  } else {
+    await createQualityRule(currentDocumentId, input);
+  }
+
+  qualityState = {
+    ...qualityState,
+    mode: "list",
+    editingRule: null,
+    status: "loading",
+    summary: null,
+  };
+  renderProfiling();
+  await loadQualityForColumn(currentDocumentId, profilingState.column, true);
+  renderTable(currentPage);
+  setStatus("Regra de qualidade salva.");
+}
+
+async function toggleQualityRule(rule: QualityRule) {
+  const nextEnabled = !rule.enabled;
+  const input: QualityRuleInput = {
+    column_name: rule.column_name,
+    rule_type: rule.rule_type,
+    name: rule.name,
+    configuration_json: rule.configuration_json,
+    enabled: nextEnabled,
+  };
+  await updateQualityRule(rule.id, input);
+  if (!nextEnabled && filterValues.get(rule.column_name)?.rule_id === rule.id) {
+    filterValues.delete(rule.column_name);
+    qualityState = { ...qualityState, appliedRuleId: null };
+    await loadPage(0);
+  }
+  if (currentDocumentId && profilingState.column) {
+    await loadQualityForColumn(currentDocumentId, profilingState.column, true);
+  }
+  setStatus(input.enabled ? "Regra ativada." : "Regra desativada.");
+}
+
+async function removeQualityRule(rule: QualityRule) {
+  const confirmed = window.confirm(`Excluir regra "${rule.name}"?`);
+  if (!confirmed) return;
+
+  await deleteQualityRule(rule.id);
+  if (filterValues.get(rule.column_name)?.rule_id === rule.id) {
+    filterValues.delete(rule.column_name);
+    qualityState = { ...qualityState, appliedRuleId: null };
+    await loadPage(0);
+  }
+  if (currentDocumentId && profilingState.column) {
+    await loadQualityForColumn(currentDocumentId, profilingState.column, true);
+  }
+  setStatus("Regra excluida.");
+}
+
+async function applyQualityRuleFilter(rule: QualityRule) {
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
+  setQualityRuleFilter(rule);
+  qualityState = { ...qualityState, appliedRuleId: rule.id };
+  renderProfiling();
+  await loadPage(0);
+  setStatus(`Filtro de violacoes aplicado em ${rule.column_name}.`);
+}
+
 function renderTable(page: TablePage | null) {
   if (!tableHeadEl || !tableBodyEl || !tableSubtitleEl || !pageRangeEl) {
     return;
@@ -2610,21 +3280,30 @@ function renderTable(page: TablePage | null) {
       </div>
       ${visibleColumns
         .map(
-          ({ column, index }, visibleIndex) => `
+          ({ column, index }, visibleIndex) => {
+            const profiled = currentDocumentId ? profilingCache.get(currentDocumentId, column) : null;
+            const hint = qualityHeaderHint(column) || (profiled ? profileHeaderHint(profiled) : "");
+
+            return `
             <div class="grid-header-cell" data-header-visible-column="${visibleIndex}" data-header-column="${escapeHtml(column)}">
               <div class="column-header">
-                ${
-                  dataMode === "document"
-                    ? `<span class="column-edit-wrap">
-                        <button class="column-edit" type="button" data-edit-column-index="${index}" aria-label="Alterar ${escapeHtml(column)}">&#9998;</button>
-                        <span class="document-tooltip column-edit-tooltip" role="tooltip">Alterar ${escapeHtml(column)}</span>
-                      </span>`
-                    : ""
-                }
                 <button class="column-sort" type="button" data-sort-column="${escapeHtml(column)}" title="${escapeHtml(column)}">
-                  <span>${escapeHtml(column)}</span>
+                  <span class="column-title-text">${escapeHtml(column)}</span>
+                  ${hint ? `<small>${escapeHtml(hint)}</small>` : ""}
                   <strong>${sortIndicator(column)}</strong>
                 </button>
+                ${
+                  dataMode === "document"
+                    ? `<button
+                        class="column-menu-trigger"
+                        type="button"
+                        data-column-menu-trigger="${escapeHtml(column)}"
+                        data-column-menu-index="${index}"
+                        aria-label="Opcoes de ${escapeHtml(column)}"
+                        aria-expanded="${openColumnMenu?.column === column ? "true" : "false"}"
+                      >⋮</button>`
+                    : ""
+                }
               </div>
               <button
                 class="column-resize-handle"
@@ -2635,7 +3314,8 @@ function renderTable(page: TablePage | null) {
                 title="Arraste para redimensionar. Duplo clique ajusta ao conteudo visivel."
               ></button>
             </div>
-          `,
+          `;
+          },
         )
         .join("")}
     </div>
@@ -2987,6 +3667,7 @@ async function selectWorkspace(workspaceId: string) {
   pendingCellFocus = null;
   dataMode = "document";
   currentSqlQuery = null;
+  closeProfilingDrawer();
   renderSummary(null, null);
   renderQuality(null);
   renderTable(null);
@@ -3068,6 +3749,7 @@ async function selectDocument(documentId: string) {
   filterValues = new Map();
   sortColumn = null;
   sortDirection = null;
+  closeProfilingDrawer();
   renderDocuments();
   await loadPage(0);
 }
@@ -3080,6 +3762,7 @@ async function removeDocument(documentId: string) {
   setStatus("Deletando documento...");
   await invoke("delete_document", { documentId });
   localStorage.removeItem(columnVisibilityStorageKey(documentId));
+  profilingCache.invalidateDocument(documentId);
 
   if (currentDocumentId === documentId) {
     currentDocumentId = null;
@@ -3088,6 +3771,7 @@ async function removeDocument(documentId: string) {
     filterValues = new Map();
     sortColumn = null;
     sortDirection = null;
+    closeProfilingDrawer();
   }
 
   await refreshWorkspaces();
@@ -3188,17 +3872,19 @@ sidebarToggleButton?.addEventListener("click", () => {
 });
 
 document.addEventListener("click", (event) => {
-  if (!openDocumentMenuId) {
-    return;
-  }
-
   const target = event.target as HTMLElement;
 
-  if (target.closest(".document-menu-wrap") || target.closest("#document-action-menu")) {
-    return;
+  if (openDocumentMenuId) {
+    if (!target.closest(".document-menu-wrap") && !target.closest("#document-action-menu")) {
+      setOpenDocumentMenu(null);
+    }
   }
 
-  setOpenDocumentMenu(null);
+  if (openColumnMenu) {
+    if (!target.closest("[data-column-menu-trigger]") && !target.closest("#column-action-menu")) {
+      setOpenColumnMenu(null);
+    }
+  }
 });
 
 document.addEventListener("keydown", (event) => {
@@ -3217,6 +3903,21 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.key === "Escape" && openDocumentMenuId) {
+    setOpenDocumentMenu(null);
+    return;
+  }
+
+  if (event.key === "Escape" && openColumnMenu) {
+    setOpenColumnMenu(null);
+    return;
+  }
+
+  if (event.key === "Escape" && profilingState.status !== "closed" && !activeCellEdit) {
+    closeProfilingDrawer();
+    return;
+  }
+
   if (event.key === "Escape" && !aboutModalEl?.classList.contains("hidden")) {
     closeAboutModal();
     return;
@@ -3224,11 +3925,6 @@ document.addEventListener("keydown", (event) => {
 
   if (event.key === "Escape" && !updateModalEl?.classList.contains("hidden")) {
     closeUpdateModal();
-    return;
-  }
-
-  if (event.key === "Escape" && openDocumentMenuId) {
-    setOpenDocumentMenu(null);
     return;
   }
 
@@ -3476,20 +4172,25 @@ tableHeadEl?.addEventListener("click", async (event) => {
     return;
   }
 
-  const editButton = target.closest<HTMLButtonElement>("[data-edit-column-index]");
+  const menuButton = target.closest<HTMLButtonElement>("[data-column-menu-trigger]");
 
-  if (editButton) {
-    if (!(await resolveActiveCellEditBeforeGridChange())) {
-      setStatus("Aguarde a atualizacao da celula atual.");
-      return;
-    }
-
-    const columnIndex = Number(editButton.dataset.editColumnIndex);
-
-    if (Number.isInteger(columnIndex)) {
-      openRenameColumn(columnIndex);
-    }
-
+  if (menuButton) {
+    event.stopPropagation();
+    const column = menuButton.dataset.columnMenuTrigger ?? "";
+    const index = Number(menuButton.dataset.columnMenuIndex);
+    const rect = menuButton.getBoundingClientRect();
+    columnMenuPosition = {
+      top: rect.bottom + 4,
+      left: Math.max(8, Math.min(window.innerWidth - 210, rect.right - 190)),
+    };
+    setOpenColumnMenu(
+      openColumnMenu?.column === column
+        ? null
+        : {
+            column,
+            index: Number.isInteger(index) ? index : -1,
+          },
+    );
     return;
   }
 
@@ -3517,6 +4218,66 @@ tableHeadEl?.addEventListener("click", async (event) => {
   }
 
   await loadPage(0);
+});
+
+columnActionMenuEl?.addEventListener("click", async (event) => {
+  const target = event.target as HTMLElement;
+  const actionButton = target.closest<HTMLButtonElement>("[data-column-menu-action]");
+
+  if (!actionButton || !openColumnMenu) {
+    return;
+  }
+
+  event.stopPropagation();
+  const action = actionButton.dataset.columnMenuAction;
+  const { column, index } = openColumnMenu;
+  setOpenColumnMenu(null);
+
+  if (action === "focus-filter") {
+    focusColumnFilter(column);
+    return;
+  }
+
+  if (action === "profile") {
+    profilingState = { ...profilingState, activeTab: "profile" };
+    await openColumnProfile(column);
+    return;
+  }
+
+  if (action === "quality") {
+    profilingState = { ...profilingState, activeTab: "quality" };
+    await openColumnProfile(column);
+    return;
+  }
+
+  if (action === "transform") {
+    profilingState = { ...profilingState, activeTab: "transform" };
+    await openColumnProfile(column);
+    return;
+  }
+
+  if (action === "rename") {
+    if (Number.isInteger(index) && index >= 0) {
+      openRenameColumn(index);
+    }
+    return;
+  }
+
+  if (action === "hide") {
+    await setColumnVisible(column, false);
+    return;
+  }
+
+  if (!(await resolveActiveCellEditBeforeGridChange())) {
+    setStatus("Aguarde a atualizacao da celula atual.");
+    return;
+  }
+
+  if (action === "sort-asc" || action === "sort-desc") {
+    sortColumn = column;
+    sortDirection = action === "sort-desc" ? "desc" : "asc";
+    await loadPage(0);
+  }
 });
 
 tableHeadEl?.addEventListener("pointerdown", (event) => {
@@ -3579,7 +4340,7 @@ tableHeadEl?.addEventListener("input", async (event) => {
   }
 
   const column = target.dataset.filterColumn ?? "";
-  filterValues.set(column, target.value);
+  setContainsFilter(column, target.value);
   renderSummary(currentSummary, currentPage);
   scheduleFilterReload();
 });

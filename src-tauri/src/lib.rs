@@ -1,9 +1,9 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{BufWriter, Read, Write},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -23,12 +23,26 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
+mod date;
+mod quality;
+mod transformations;
+
 const DOCUMENTS_TABLE: &str = "imported_documents";
 const WORKSPACES_TABLE: &str = "workspaces";
 const VALTRON_ROW_ID_COLUMN: &str = "_valtron_row_id";
 const DUCKDB_ROW_ID_ALIAS: &str = "__valtron_duckdb_rowid";
 const DEFAULT_WORKSPACE_ID: &str = "default";
 const MAX_COLUMNS: usize = 16_384;
+const PROFILE_BUCKET_COUNT: i64 = 12;
+const EXCEL_SERIAL_DATE_INFERENCE_THRESHOLD: f64 = 0.90;
+
+#[derive(Default)]
+struct AppState {
+    column_profile_cache: Mutex<HashMap<String, ColumnProfile>>,
+    quality_cache: Mutex<HashMap<String, quality::QualityValidationSummary>>,
+    quality_revisions: Mutex<HashMap<String, u64>>,
+    transformation_locks: Mutex<HashSet<String>>,
+}
 
 #[derive(Default)]
 struct ImportPerformance {
@@ -417,7 +431,95 @@ struct CellUpdateResult {
 #[derive(Clone, Deserialize, Serialize)]
 struct ColumnFilter {
     column: String,
+    #[serde(default = "default_filter_operator")]
+    operator: String,
     value: String,
+    #[serde(default)]
+    rule_id: Option<String>,
+}
+
+fn default_filter_operator() -> String {
+    "contains".to_string()
+}
+
+#[derive(Clone, Serialize)]
+struct ColumnProfile {
+    column: String,
+    physical_type: String,
+    inferred_type: String,
+    total_count: usize,
+    filled_count: usize,
+    empty_count: usize,
+    empty_percentage: f64,
+    distinct_count: usize,
+    duplicate_count: usize,
+    text_stats: Option<TextStats>,
+    numeric_stats: Option<NumericStats>,
+    date_stats: Option<DateStats>,
+    boolean_stats: Option<Vec<BooleanStat>>,
+    top_values: Vec<ValueFrequency>,
+    distribution: Vec<DistributionBucket>,
+    performance: ColumnProfilePerformance,
+}
+
+#[derive(Clone, Serialize)]
+struct TextStats {
+    min_length: Option<f64>,
+    avg_length: Option<f64>,
+    max_length: Option<f64>,
+}
+
+#[derive(Clone, Serialize)]
+struct NumericStats {
+    min: Option<f64>,
+    max: Option<f64>,
+    avg: Option<f64>,
+    median: Option<f64>,
+    stddev: Option<f64>,
+}
+
+#[derive(Clone, Serialize)]
+struct DateStats {
+    min: Option<String>,
+    max: Option<String>,
+    predominant_format: Option<String>,
+    example_original: Option<String>,
+    example_interpreted: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct BooleanStat {
+    label: String,
+    count: usize,
+    percentage: f64,
+}
+
+#[derive(Clone, Serialize)]
+struct ValueFrequency {
+    value: String,
+    count: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct DistributionBucket {
+    bucket: usize,
+    min: f64,
+    max: f64,
+    count: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct ColumnProfilePerformance {
+    duckdb_ms: u128,
+    processing_ms: u128,
+    total_ms: u128,
+    cache_hit: bool,
+}
+
+#[derive(Clone)]
+struct InferredColumn {
+    inferred_type: String,
+    date_source: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -496,6 +598,8 @@ fn init_database(connection: &Connection) -> Result<(), String> {
     ensure_document_import_duration_column(connection)?;
     ensure_document_import_performance_column(connection)?;
     assign_default_workspace_to_documents(connection)?;
+    quality::init_database(connection)?;
+    transformations::init_database(connection)?;
 
     Ok(())
 }
@@ -1284,43 +1388,87 @@ fn sanitize_filters(filters: Vec<ColumnFilter>, columns: &[String]) -> Vec<Colum
         .into_iter()
         .filter_map(|filter| {
             let value = filter.value.trim().to_string();
+            let operator = match filter.operator.as_str() {
+                "empty" => "empty",
+                "equals" => "equals",
+                "quality_violation" => "quality_violation",
+                _ => "contains",
+            }
+            .to_string();
 
-            if value.is_empty() || !columns.iter().any(|column| column == &filter.column) {
+            if !columns.iter().any(|column| column == &filter.column) {
+                return None;
+            }
+
+            if operator == "quality_violation"
+                && filter.rule_id.as_deref().unwrap_or("").trim().is_empty()
+            {
+                return None;
+            }
+
+            if operator != "empty" && operator != "quality_violation" && value.is_empty() {
                 return None;
             }
 
             Some(ColumnFilter {
                 column: filter.column,
+                operator,
                 value,
+                rule_id: filter.rule_id,
             })
         })
         .collect()
 }
 
-fn build_where_clause(filters: &[ColumnFilter]) -> String {
+fn build_where_clause(
+    connection: &Connection,
+    table_name: Option<&str>,
+    filters: &[ColumnFilter],
+) -> Result<(String, Vec<String>), String> {
     if filters.is_empty() {
-        return String::new();
+        return Ok((String::new(), Vec::new()));
     }
 
-    let conditions = filters
-        .iter()
-        .map(|filter| {
-            format!(
-                "LOWER(COALESCE({}, '')) LIKE ?",
-                quoted_identifier(&filter.column)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" AND ");
+    let mut conditions = Vec::new();
+    let mut params = Vec::new();
 
-    format!(" WHERE {conditions}")
-}
+    for filter in filters {
+        let column = quoted_identifier(&filter.column);
 
-fn filter_params(filters: &[ColumnFilter]) -> Vec<String> {
-    filters
-        .iter()
-        .map(|filter| format!("%{}%", filter.value.to_lowercase()))
-        .collect()
+        match filter.operator.as_str() {
+            "empty" => conditions.push(format!(
+                "({column} IS NULL OR TRIM(CAST({column} AS VARCHAR)) = '')"
+            )),
+            "equals" => {
+                conditions.push(format!("CAST({column} AS VARCHAR) = ?"));
+                params.push(filter.value.clone());
+            }
+            "quality_violation" => {
+                let table_name = table_name.ok_or_else(|| {
+                    "Filtros de qualidade estao disponiveis apenas para documentos.".to_string()
+                })?;
+                let rule_id = filter
+                    .rule_id
+                    .as_deref()
+                    .ok_or_else(|| "Regra de qualidade nao informada.".to_string())?;
+                let rule = quality::get_rule(connection, rule_id)?;
+                if rule.column_name != filter.column {
+                    return Err("Regra de qualidade nao pertence a coluna filtrada.".to_string());
+                }
+                let condition = quality::build_condition_for_rule(&rule, table_name, None)?;
+                conditions.push(condition.sql);
+                params.extend(condition.params);
+            }
+            _ => {
+                conditions.push(format!(
+                    "LOWER(COALESCE(CAST({column} AS VARCHAR), '')) LIKE ?"
+                ));
+                params.push(format!("%{}%", filter.value.to_lowercase()));
+            }
+        }
+    }
+
+    Ok((format!(" WHERE {}", conditions.join(" AND ")), params))
 }
 
 fn build_order_clause(
@@ -1412,6 +1560,7 @@ fn get_source_stats(
 fn get_page_from_source(
     connection: &Connection,
     source_sql: &str,
+    table_name: Option<&str>,
     columns: Vec<String>,
     offset: usize,
     limit: usize,
@@ -1423,8 +1572,8 @@ fn get_page_from_source(
     let safe_offset = offset;
     let stats = get_source_stats(connection, source_sql, &columns)?;
     let active_filters = sanitize_filters(filters, &columns);
-    let where_clause = build_where_clause(&active_filters);
-    let filter_values = filter_params(&active_filters);
+    let (where_clause, filter_values) =
+        build_where_clause(connection, table_name, &active_filters)?;
     let (order_clause, safe_sort_column, safe_sort_direction) =
         build_order_clause(sort_column, sort_direction, &columns);
     let filter_refs = filter_values
@@ -1514,6 +1663,7 @@ fn projection_sql(columns: &[String]) -> String {
 fn get_window_from_source(
     connection: &Connection,
     source_sql: &str,
+    table_name: Option<&str>,
     columns: Vec<String>,
     column_types: HashMap<String, String>,
     row_id_projection: Option<String>,
@@ -1528,8 +1678,8 @@ fn get_window_from_source(
     let safe_limit = limit.clamp(25, 500);
     let safe_offset = offset;
     let active_filters = sanitize_filters(filters, &columns);
-    let where_clause = build_where_clause(&active_filters);
-    let filter_values = filter_params(&active_filters);
+    let (where_clause, filter_values) =
+        build_where_clause(connection, table_name, &active_filters)?;
     let (order_clause, safe_sort_column, safe_sort_direction) =
         build_order_clause(sort_column, sort_direction, &columns);
     let selected_columns = selected_columns(&columns, &visible_columns);
@@ -1580,14 +1730,14 @@ fn get_window_from_source(
         .next()
         .map_err(|error| format!("Nao foi possivel ler uma linha: {error}"))?
     {
-        let row_id = if row_id_projection.is_some() {
-            Some(
-                row.get::<_, i64>(0)
-                    .map_err(|error| format!("Nao foi possivel ler o ID interno da linha: {error}"))?,
-            )
-        } else {
-            None
-        };
+        let row_id =
+            if row_id_projection.is_some() {
+                Some(row.get::<_, i64>(0).map_err(|error| {
+                    format!("Nao foi possivel ler o ID interno da linha: {error}")
+                })?)
+            } else {
+                None
+            };
         let first_value_index = usize::from(row_id_projection.is_some());
         let mut values = Vec::with_capacity(selected_columns.len());
 
@@ -1641,6 +1791,640 @@ fn get_window_from_source(
         stats,
         performance,
     })
+}
+
+fn profile_cache_key(document_id: &str, column: &str) -> String {
+    format!("{document_id}\u{0}{column}")
+}
+
+fn invalidate_profile(state: &tauri::State<'_, AppState>, document_id: &str, column: &str) {
+    if let Ok(mut cache) = state.column_profile_cache.lock() {
+        cache.remove(&profile_cache_key(document_id, column));
+    }
+}
+
+fn invalidate_document_profiles(state: &tauri::State<'_, AppState>, document_id: &str) {
+    if let Ok(mut cache) = state.column_profile_cache.lock() {
+        let prefix = format!("{document_id}\u{0}");
+        cache.retain(|key, _profile| !key.starts_with(&prefix));
+    }
+}
+
+fn quality_revision(state: &tauri::State<'_, AppState>, document_id: &str) -> u64 {
+    state
+        .quality_revisions
+        .lock()
+        .ok()
+        .and_then(|revisions| revisions.get(document_id).copied())
+        .unwrap_or(0)
+}
+
+fn quality_cache_key(document_id: &str, column: &str, revision: u64) -> String {
+    format!("{document_id}\u{0}{column}\u{0}{revision}")
+}
+
+fn invalidate_quality(state: &tauri::State<'_, AppState>, document_id: &str) {
+    if let Ok(mut revisions) = state.quality_revisions.lock() {
+        let entry = revisions.entry(document_id.to_string()).or_insert(0);
+        *entry = entry.saturating_add(1);
+    }
+
+    if let Ok(mut cache) = state.quality_cache.lock() {
+        let prefix = format!("{document_id}\u{0}");
+        cache.retain(|key, _summary| !key.starts_with(&prefix));
+    }
+}
+
+fn invalidate_quality_column(state: &tauri::State<'_, AppState>, document_id: &str, _column: &str) {
+    invalidate_quality(state, document_id);
+}
+
+fn lock_document_for_transformation(
+    state: &tauri::State<'_, AppState>,
+    document_id: &str,
+) -> Result<(), String> {
+    let mut locks = state
+        .transformation_locks
+        .lock()
+        .map_err(|_| "Nao foi possivel bloquear o documento para transformacao.".to_string())?;
+
+    if !locks.insert(document_id.to_string()) {
+        return Err("Ja existe uma transformacao em andamento neste documento.".to_string());
+    }
+
+    Ok(())
+}
+
+fn unlock_document_for_transformation(state: &tauri::State<'_, AppState>, document_id: &str) {
+    if let Ok(mut locks) = state.transformation_locks.lock() {
+        locks.remove(document_id);
+    }
+}
+
+fn profile_value_sql(column_sql: &str) -> String {
+    format!("TRIM(CAST({column_sql} AS VARCHAR))")
+}
+
+fn profile_empty_sql(column_sql: &str) -> String {
+    format!("{column_sql} IS NULL OR TRIM(CAST({column_sql} AS VARCHAR)) = ''")
+}
+
+fn profile_filled_source_sql(table_name: &str, column: &str) -> String {
+    let column_sql = quoted_identifier(column);
+    let value_sql = profile_value_sql(&column_sql);
+    let empty_sql = profile_empty_sql(&column_sql);
+
+    format!(
+        "SELECT {value_sql} AS value
+         FROM {}
+         WHERE NOT ({empty_sql})",
+        table_sql(table_name)
+    )
+}
+
+fn numeric_profile_value_sql() -> &'static str {
+    "TRY_CAST(REPLACE(value, ',', '.') AS DOUBLE)"
+}
+
+fn percentage(part: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (part as f64 * 100.0) / total as f64
+    }
+}
+
+fn classify_boolean_value(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "sim" | "s" | "yes" | "y" => Some("Sim"),
+        "false" | "0" | "nao" | "não" | "n" | "no" => Some("Nao"),
+        _ => None,
+    }
+}
+
+fn infer_column_type(
+    connection: &Connection,
+    filled_source: &str,
+    filled_count: usize,
+) -> Result<InferredColumn, String> {
+    if filled_count == 0 {
+        return Ok(InferredColumn {
+            inferred_type: "text".to_string(),
+            date_source: None,
+        });
+    }
+
+    let excel_serial_condition = date::excel_serial::duckdb_excel_serial_valid_condition("value");
+    let sql = format!(
+        "SELECT
+            SUM(CASE WHEN LOWER(value) IN ('true', 'false', '1', '0', 'sim', 's', 'nao', 'não', 'n', 'yes', 'y', 'no') THEN 1 ELSE 0 END),
+            SUM(CASE WHEN regexp_matches(value, '^[+-]?[0-9]+$') THEN 1 ELSE 0 END),
+            SUM(CASE WHEN regexp_matches(REPLACE(value, ',', '.'), '^[+-]?([0-9]+(\\.[0-9]+)?|\\.[0-9]+)$') THEN 1 ELSE 0 END),
+            SUM(CASE WHEN TRY_CAST(value AS DATE) IS NOT NULL THEN 1 ELSE 0 END),
+            SUM(CASE WHEN TRY_CAST(value AS TIMESTAMP) IS NOT NULL THEN 1 ELSE 0 END),
+            SUM(CASE WHEN regexp_matches(value, '([ T][0-9]{{1,2}}:[0-9]{{2}})') THEN 1 ELSE 0 END),
+            SUM(CASE WHEN {excel_serial_condition} THEN 1 ELSE 0 END)
+         FROM ({filled_source}) AS filled_values",
+        excel_serial_condition = excel_serial_condition
+    );
+
+    let (
+        boolean_count,
+        integer_count,
+        decimal_count,
+        date_count,
+        datetime_count,
+        time_count,
+        excel_serial_count,
+    ) = connection
+        .query_row(&sql, [], |row| {
+            Ok((
+                row.get::<_, Option<i64>>(0)?.unwrap_or(0).max(0) as usize,
+                row.get::<_, Option<i64>>(1)?.unwrap_or(0).max(0) as usize,
+                row.get::<_, Option<i64>>(2)?.unwrap_or(0).max(0) as usize,
+                row.get::<_, Option<i64>>(3)?.unwrap_or(0).max(0) as usize,
+                row.get::<_, Option<i64>>(4)?.unwrap_or(0).max(0) as usize,
+                row.get::<_, Option<i64>>(5)?.unwrap_or(0).max(0) as usize,
+                row.get::<_, Option<i64>>(6)?.unwrap_or(0).max(0) as usize,
+            ))
+        })
+        .map_err(|error| format!("Nao foi possivel inferir o tipo da coluna: {error}"))?;
+
+    let excel_serial_ratio = excel_serial_count as f64 / filled_count as f64;
+    let (inferred_type, date_source) = if boolean_count == filled_count {
+        ("boolean", None)
+    } else if datetime_count == filled_count && time_count > 0 {
+        ("datetime", None)
+    } else if date_count == filled_count || datetime_count == filled_count {
+        ("date", Some("formatted".to_string()))
+    } else if excel_serial_ratio >= EXCEL_SERIAL_DATE_INFERENCE_THRESHOLD {
+        ("date", Some("excel_serial".to_string()))
+    } else if integer_count == filled_count {
+        ("integer", None)
+    } else if decimal_count == filled_count {
+        ("decimal", None)
+    } else {
+        ("text", None)
+    };
+
+    Ok(InferredColumn {
+        inferred_type: inferred_type.to_string(),
+        date_source,
+    })
+}
+
+fn get_profile_counts(
+    connection: &Connection,
+    table_name: &str,
+    column: &str,
+) -> Result<(usize, usize, usize, usize), String> {
+    let column_sql = quoted_identifier(column);
+    let empty_sql = profile_empty_sql(&column_sql);
+    let value_sql = profile_value_sql(&column_sql);
+
+    connection
+        .query_row(
+            &format!(
+                "SELECT
+                    COUNT(*),
+                    SUM(CASE WHEN {empty_sql} THEN 1 ELSE 0 END),
+                    COUNT(DISTINCT CASE WHEN NOT ({empty_sql}) THEN {value_sql} END)
+                 FROM {}",
+                table_sql(table_name)
+            ),
+            [],
+            |row| {
+                let total = row.get::<_, i64>(0)?.max(0) as usize;
+                let empty = row.get::<_, Option<i64>>(1)?.unwrap_or(0).max(0) as usize;
+                let distinct = row.get::<_, i64>(2)?.max(0) as usize;
+                Ok((total, total.saturating_sub(empty), empty, distinct))
+            },
+        )
+        .map_err(|error| format!("Nao foi possivel calcular metricas gerais da coluna: {error}"))
+}
+
+fn get_top_values(
+    connection: &Connection,
+    filled_source: &str,
+) -> Result<Vec<ValueFrequency>, String> {
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT value, COUNT(*) AS frequency
+             FROM ({filled_source}) AS filled_values
+             GROUP BY value
+             ORDER BY frequency DESC, value ASC
+             LIMIT 10"
+        ))
+        .map_err(|error| format!("Nao foi possivel preparar valores frequentes: {error}"))?;
+
+    statement
+        .query_map([], |row| {
+            Ok(ValueFrequency {
+                value: row.get(0)?,
+                count: row.get::<_, i64>(1)?.max(0) as usize,
+            })
+        })
+        .map_err(|error| format!("Nao foi possivel consultar valores frequentes: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Nao foi possivel processar valores frequentes: {error}"))
+}
+
+fn get_text_stats(
+    connection: &Connection,
+    filled_source: &str,
+) -> Result<Option<TextStats>, String> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT MIN(LENGTH(value)), AVG(LENGTH(value)), MAX(LENGTH(value))
+                 FROM ({filled_source}) AS filled_values"
+            ),
+            [],
+            |row| {
+                Ok(TextStats {
+                    min_length: row.get::<_, Option<i64>>(0)?.map(|value| value as f64),
+                    avg_length: row.get::<_, Option<f64>>(1)?,
+                    max_length: row.get::<_, Option<i64>>(2)?.map(|value| value as f64),
+                })
+            },
+        )
+        .map(Some)
+        .map_err(|error| format!("Nao foi possivel calcular estatisticas de texto: {error}"))
+}
+
+fn get_numeric_stats(
+    connection: &Connection,
+    filled_source: &str,
+) -> Result<(Option<NumericStats>, Vec<DistributionBucket>), String> {
+    let numeric_sql = numeric_profile_value_sql();
+    let stats = connection
+        .query_row(
+            &format!(
+                "WITH numeric_values AS (
+                    SELECT {numeric_sql} AS number_value
+                    FROM ({filled_source}) AS filled_values
+                    WHERE {numeric_sql} IS NOT NULL
+                 )
+                 SELECT
+                    MIN(number_value),
+                    MAX(number_value),
+                    AVG(number_value),
+                    median(number_value),
+                    STDDEV_SAMP(number_value)
+                 FROM numeric_values"
+            ),
+            [],
+            |row| {
+                Ok(NumericStats {
+                    min: row.get::<_, Option<f64>>(0)?,
+                    max: row.get::<_, Option<f64>>(1)?,
+                    avg: row.get::<_, Option<f64>>(2)?,
+                    median: row.get::<_, Option<f64>>(3)?,
+                    stddev: row.get::<_, Option<f64>>(4)?,
+                })
+            },
+        )
+        .map_err(|error| format!("Nao foi possivel calcular estatisticas numericas: {error}"))?;
+
+    let mut distribution = Vec::new();
+
+    if let (Some(min), Some(max)) = (stats.min, stats.max) {
+        let mut statement = connection
+            .prepare(&format!(
+                "WITH numeric_values AS (
+                    SELECT {numeric_sql} AS number_value
+                    FROM ({filled_source}) AS filled_values
+                    WHERE {numeric_sql} IS NOT NULL
+                 ),
+                 bounds AS (
+                    SELECT MIN(number_value) AS min_value, MAX(number_value) AS max_value
+                    FROM numeric_values
+                 ),
+                 bucketed AS (
+                    SELECT
+                        CASE
+                            WHEN bounds.max_value = bounds.min_value THEN 0
+                            ELSE LEAST({bucket_count} - 1, GREATEST(0, CAST(FLOOR(((number_value - bounds.min_value) / (bounds.max_value - bounds.min_value)) * {bucket_count}) AS BIGINT)))
+                        END AS bucket
+                    FROM numeric_values, bounds
+                 )
+                 SELECT bucket, COUNT(*) AS frequency
+                 FROM bucketed
+                 GROUP BY bucket
+                 ORDER BY bucket",
+                bucket_count = PROFILE_BUCKET_COUNT
+            ))
+            .map_err(|error| format!("Nao foi possivel preparar distribuicao numerica: {error}"))?;
+
+        let bucket_width = if (max - min).abs() < f64::EPSILON {
+            0.0
+        } else {
+            (max - min) / PROFILE_BUCKET_COUNT as f64
+        };
+
+        distribution = statement
+            .query_map([], |row| {
+                let bucket = row.get::<_, i64>(0)?.max(0) as usize;
+                let bucket_min = if bucket_width == 0.0 {
+                    min
+                } else {
+                    min + bucket_width * bucket as f64
+                };
+                let bucket_max = if bucket_width == 0.0 {
+                    max
+                } else if bucket + 1 >= PROFILE_BUCKET_COUNT as usize {
+                    max
+                } else {
+                    min + bucket_width * (bucket + 1) as f64
+                };
+
+                Ok(DistributionBucket {
+                    bucket,
+                    min: bucket_min,
+                    max: bucket_max,
+                    count: row.get::<_, i64>(1)?.max(0) as usize,
+                })
+            })
+            .map_err(|error| format!("Nao foi possivel consultar distribuicao numerica: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| {
+                format!("Nao foi possivel processar distribuicao numerica: {error}")
+            })?;
+    }
+
+    Ok((Some(stats), distribution))
+}
+
+fn get_date_stats(
+    connection: &Connection,
+    filled_source: &str,
+    date_source: Option<&str>,
+) -> Result<Option<DateStats>, String> {
+    if date_source == Some("excel_serial") {
+        return get_excel_serial_date_stats(connection, filled_source);
+    }
+
+    connection
+        .query_row(
+            &format!(
+                "WITH date_values AS (
+                    SELECT TRY_CAST(value AS TIMESTAMP) AS date_value
+                    FROM ({filled_source}) AS filled_values
+                    WHERE TRY_CAST(value AS TIMESTAMP) IS NOT NULL
+                 )
+                 SELECT MIN(date_value), MAX(date_value)
+                 FROM date_values"
+            ),
+            [],
+            |row| {
+                let min = row
+                    .get_ref(0)
+                    .ok()
+                    .map(value_ref_to_string)
+                    .filter(|value| !value.is_empty());
+                let max = row
+                    .get_ref(1)
+                    .ok()
+                    .map(value_ref_to_string)
+                    .filter(|value| !value.is_empty());
+
+                Ok(DateStats {
+                    min,
+                    max,
+                    predominant_format: date_source.map(|_| "Texto".to_string()),
+                    example_original: None,
+                    example_interpreted: None,
+                })
+            },
+        )
+        .map(Some)
+        .map_err(|error| format!("Nao foi possivel calcular estatisticas de data: {error}"))
+}
+
+fn get_excel_serial_date_stats(
+    connection: &Connection,
+    filled_source: &str,
+) -> Result<Option<DateStats>, String> {
+    let date_value = date::excel_serial::duckdb_excel_serial_date_expression("value");
+    connection
+        .query_row(
+            &format!(
+                "WITH date_values AS (
+                    SELECT value, {date_value} AS date_value
+                    FROM ({filled_source}) AS filled_values
+                    WHERE {date_value} IS NOT NULL
+                 ),
+                 example AS (
+                    SELECT value AS example_original, date_value AS example_interpreted
+                    FROM date_values
+                    ORDER BY value
+                    LIMIT 1
+                 )
+                 SELECT
+                    MIN(date_values.date_value),
+                    MAX(date_values.date_value),
+                    MAX(example.example_original),
+                    MAX(example.example_interpreted)
+                 FROM date_values
+                 LEFT JOIN example ON TRUE"
+            ),
+            [],
+            |row| {
+                let min = row
+                    .get_ref(0)
+                    .ok()
+                    .map(value_ref_to_string)
+                    .filter(|value| !value.is_empty());
+                let max = row
+                    .get_ref(1)
+                    .ok()
+                    .map(value_ref_to_string)
+                    .filter(|value| !value.is_empty());
+                let example_original = row
+                    .get_ref(2)
+                    .ok()
+                    .map(value_ref_to_string)
+                    .filter(|value| !value.is_empty());
+                let example_interpreted = row
+                    .get_ref(3)
+                    .ok()
+                    .map(value_ref_to_string)
+                    .filter(|value| !value.is_empty());
+
+                Ok(DateStats {
+                    min,
+                    max,
+                    predominant_format: Some("Serial de data do Excel".to_string()),
+                    example_original,
+                    example_interpreted,
+                })
+            },
+        )
+        .map(Some)
+        .map_err(|error| format!("Nao foi possivel calcular estatisticas de serial Excel: {error}"))
+}
+
+fn get_boolean_stats(
+    connection: &Connection,
+    filled_source: &str,
+    filled_count: usize,
+) -> Result<Option<Vec<BooleanStat>>, String> {
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT LOWER(value), COUNT(*) AS frequency
+             FROM ({filled_source}) AS filled_values
+             GROUP BY LOWER(value)"
+        ))
+        .map_err(|error| format!("Nao foi possivel preparar estatisticas booleanas: {error}"))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|error| format!("Nao foi possivel consultar estatisticas booleanas: {error}"))?;
+    let mut yes_count = 0usize;
+    let mut no_count = 0usize;
+
+    while let Some(row) = rows
+        .next()
+        .map_err(|error| format!("Nao foi possivel ler estatisticas booleanas: {error}"))?
+    {
+        let value = row
+            .get::<_, String>(0)
+            .map_err(|error| format!("Nao foi possivel ler valor booleano: {error}"))?;
+        let count = row.get::<_, i64>(1).unwrap_or(0).max(0) as usize;
+
+        match classify_boolean_value(&value) {
+            Some("Sim") => yes_count += count,
+            Some("Nao") => no_count += count,
+            _ => {}
+        }
+    }
+
+    Ok(Some(vec![
+        BooleanStat {
+            label: "Sim".to_string(),
+            count: yes_count,
+            percentage: percentage(yes_count, filled_count),
+        },
+        BooleanStat {
+            label: "Nao".to_string(),
+            count: no_count,
+            percentage: percentage(no_count, filled_count),
+        },
+    ]))
+}
+
+fn log_column_profile_performance(
+    document_id: &str,
+    column: &str,
+    inferred_type: &str,
+    row_count: usize,
+    performance: &ColumnProfilePerformance,
+) {
+    eprintln!(
+        "COLUMN_PROFILE_PERFORMANCE\n\
+document_id: {document_id}\n\
+column: {column}\n\
+inferred_type: {inferred_type}\n\
+row_count: {row_count}\n\
+duckdb_ms: {}\n\
+processing_ms: {}\n\
+total_ms: {}\n\
+cache_hit: {}",
+        performance.duckdb_ms,
+        performance.processing_ms,
+        performance.total_ms,
+        performance.cache_hit
+    );
+}
+
+fn get_column_profile_blocking(
+    app: AppHandle,
+    document_id: String,
+    column: String,
+) -> Result<ColumnProfile, String> {
+    let total_start = Instant::now();
+    let connection = open_database(&app)?;
+    let table_name = get_document_table(&connection, &document_id)?;
+    let columns = get_columns(&connection, &table_name)?;
+    let column = column.trim().to_string();
+
+    if !columns.iter().any(|item| item == &column) {
+        return Err("Coluna nao existe no documento selecionado.".to_string());
+    }
+
+    let duckdb_start = Instant::now();
+    let physical_type = get_column_data_type(&connection, &table_name, &column)?;
+    let (total_count, filled_count, empty_count, distinct_count) =
+        get_profile_counts(&connection, &table_name, &column)?;
+    let filled_source = profile_filled_source_sql(&table_name, &column);
+    let inferred = infer_column_type(&connection, &filled_source, filled_count)?;
+    let inferred_type = inferred.inferred_type.clone();
+    let top_values = get_top_values(&connection, &filled_source)?;
+
+    let (text_stats, numeric_stats, date_stats, boolean_stats, distribution) =
+        match inferred_type.as_str() {
+            "integer" | "decimal" => {
+                let (stats, distribution) = get_numeric_stats(&connection, &filled_source)?;
+                (None, stats, None, None, distribution)
+            }
+            "date" | "datetime" => (
+                None,
+                None,
+                get_date_stats(&connection, &filled_source, inferred.date_source.as_deref())?,
+                None,
+                Vec::new(),
+            ),
+            "boolean" => (
+                None,
+                None,
+                None,
+                get_boolean_stats(&connection, &filled_source, filled_count)?,
+                Vec::new(),
+            ),
+            _ => (
+                get_text_stats(&connection, &filled_source)?,
+                None,
+                None,
+                None,
+                Vec::new(),
+            ),
+        };
+    let duckdb_elapsed = duckdb_start.elapsed();
+    let processing_start = Instant::now();
+    let performance = ColumnProfilePerformance {
+        duckdb_ms: duckdb_elapsed.as_millis(),
+        processing_ms: processing_start.elapsed().as_millis(),
+        total_ms: total_start.elapsed().as_millis(),
+        cache_hit: false,
+    };
+
+    let profile = ColumnProfile {
+        column: column.clone(),
+        physical_type,
+        inferred_type,
+        total_count,
+        filled_count,
+        empty_count,
+        empty_percentage: percentage(empty_count, total_count),
+        distinct_count,
+        duplicate_count: filled_count.saturating_sub(distinct_count),
+        text_stats,
+        numeric_stats,
+        date_stats,
+        boolean_stats,
+        top_values,
+        distribution,
+        performance,
+    };
+
+    log_column_profile_performance(
+        &document_id,
+        &column,
+        &profile.inferred_type,
+        profile.total_count,
+        &profile.performance,
+    );
+
+    Ok(profile)
 }
 
 fn import_xlsx_blocking(
@@ -2676,6 +3460,198 @@ async fn import_document(
 }
 
 #[tauri::command]
+async fn get_column_profile(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    document_id: String,
+    column: String,
+) -> Result<ColumnProfile, String> {
+    let key = profile_cache_key(&document_id, &column);
+
+    if let Ok(cache) = state.column_profile_cache.lock() {
+        if let Some(profile) = cache.get(&key) {
+            let mut cached = profile.clone();
+            cached.performance = ColumnProfilePerformance {
+                duckdb_ms: 0,
+                processing_ms: 0,
+                total_ms: 0,
+                cache_hit: true,
+            };
+            log_column_profile_performance(
+                &document_id,
+                &column,
+                &cached.inferred_type,
+                cached.total_count,
+                &cached.performance,
+            );
+            return Ok(cached);
+        }
+    }
+
+    let app_for_task = app.clone();
+    let document_for_task = document_id.clone();
+    let column_for_task = column.clone();
+    let profile = tauri::async_runtime::spawn_blocking(move || {
+        get_column_profile_blocking(app_for_task, document_for_task, column_for_task)
+    })
+    .await
+    .map_err(|error| format!("A analise da coluna foi interrompida: {error}"))??;
+
+    if let Ok(mut cache) = state.column_profile_cache.lock() {
+        cache.insert(key, profile.clone());
+    }
+
+    Ok(profile)
+}
+
+#[tauri::command]
+fn list_quality_rules(
+    app: AppHandle,
+    document_id: String,
+    column_name: Option<String>,
+) -> Result<Vec<quality::QualityRule>, String> {
+    let connection = open_database(&app)?;
+    if let Some(column) = column_name.as_deref() {
+        let table_name = get_document_table(&connection, &document_id)?;
+        let columns = get_columns(&connection, &table_name)?;
+        if !columns.iter().any(|item| item == column) {
+            return Err("Coluna nao existe no documento selecionado.".to_string());
+        }
+    }
+    quality::list_rules(&connection, &document_id, column_name.as_deref())
+}
+
+#[tauri::command]
+fn create_quality_rule(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    document_id: String,
+    input: quality::QualityRuleInput,
+) -> Result<quality::QualityRule, String> {
+    let connection = open_database(&app)?;
+    let table_name = get_document_table(&connection, &document_id)?;
+    let columns = get_columns(&connection, &table_name)?;
+    if !columns.iter().any(|item| item == &input.column_name) {
+        return Err("Coluna nao existe no documento selecionado.".to_string());
+    }
+    let rule = quality::create_rule(&connection, &document_id, input)?;
+    invalidate_quality(&state, &document_id);
+    Ok(rule)
+}
+
+#[tauri::command]
+fn update_quality_rule(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    rule_id: String,
+    input: quality::QualityRuleInput,
+) -> Result<quality::QualityRule, String> {
+    let connection = open_database(&app)?;
+    let current = quality::get_rule(&connection, &rule_id)?;
+    let table_name = get_document_table(&connection, &current.document_id)?;
+    let columns = get_columns(&connection, &table_name)?;
+    if !columns.iter().any(|item| item == &input.column_name) {
+        return Err("Coluna nao existe no documento selecionado.".to_string());
+    }
+    let rule = quality::update_rule(&connection, &rule_id, input)?;
+    invalidate_quality(&state, &rule.document_id);
+    Ok(rule)
+}
+
+#[tauri::command]
+fn delete_quality_rule(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    rule_id: String,
+) -> Result<(), String> {
+    let connection = open_database(&app)?;
+    let document_id = quality::delete_rule(&connection, &rule_id)?;
+    if let Some(document_id) = document_id {
+        invalidate_quality(&state, &document_id);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn validate_quality_rules(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    document_id: String,
+    column_name: String,
+) -> Result<quality::QualityValidationSummary, String> {
+    let revision = quality_revision(&state, &document_id);
+    let key = quality_cache_key(&document_id, &column_name, revision);
+    if let Ok(cache) = state.quality_cache.lock() {
+        if let Some(summary) = cache.get(&key) {
+            let mut cached = summary.clone();
+            cached.performance.cache_hit = true;
+            return Ok(cached);
+        }
+    }
+
+    let connection = open_database(&app)?;
+    let table_name = get_document_table(&connection, &document_id)?;
+    let columns = get_columns(&connection, &table_name)?;
+    if !columns.iter().any(|item| item == &column_name) {
+        return Err("Coluna nao existe no documento selecionado.".to_string());
+    }
+    let rules = quality::list_rules(&connection, &document_id, Some(&column_name))?;
+    let summary = quality::validate_rules(
+        &connection,
+        &document_id,
+        &table_name,
+        &column_name,
+        &rules,
+        false,
+    )?;
+    if let Ok(mut cache) = state.quality_cache.lock() {
+        cache.insert(key, summary.clone());
+    }
+    Ok(summary)
+}
+
+#[tauri::command]
+fn get_quality_rule_violations(
+    app: AppHandle,
+    rule_id: String,
+    offset: usize,
+    limit: usize,
+    visible_columns: Vec<String>,
+) -> Result<TableWindow, String> {
+    let connection = open_database(&app)?;
+    let rule = quality::get_rule(&connection, &rule_id)?;
+    let table_name = get_document_table(&connection, &rule.document_id)?;
+    let columns = get_columns(&connection, &table_name)?;
+    get_window_from_source(
+        &connection,
+        &format!(
+            "SELECT rowid AS {}, * FROM {}",
+            quoted_identifier(DUCKDB_ROW_ID_ALIAS),
+            table_sql(&table_name)
+        ),
+        Some(&table_name),
+        columns,
+        get_column_data_types(
+            &connection,
+            &table_name,
+            &get_columns(&connection, &table_name)?,
+        )?,
+        Some(quoted_identifier(DUCKDB_ROW_ID_ALIAS)),
+        offset,
+        limit,
+        vec![ColumnFilter {
+            column: rule.column_name,
+            operator: "quality_violation".to_string(),
+            value: String::new(),
+            rule_id: Some(rule.id),
+        }],
+        None,
+        None,
+        visible_columns,
+    )
+}
+
+#[tauri::command]
 fn list_workspaces(app: AppHandle) -> Result<Vec<WorkspaceInfo>, String> {
     let connection = open_database(&app)?;
     let mut statement = connection
@@ -2839,7 +3815,11 @@ fn list_documents(
 }
 
 #[tauri::command]
-fn delete_document(app: AppHandle, document_id: String) -> Result<(), String> {
+fn delete_document(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    document_id: String,
+) -> Result<(), String> {
     let connection = open_database(&app)?;
     let table_name = get_document_table(&connection, &document_id)?;
 
@@ -2858,6 +3838,9 @@ fn delete_document(app: AppHandle, document_id: String) -> Result<(), String> {
             params![document_id],
         )
         .map_err(|error| format!("Nao foi possivel remover o documento: {error}"))?;
+    quality::delete_document_rules(&connection, &document_id)?;
+    invalidate_document_profiles(&state, &document_id);
+    invalidate_quality(&state, &document_id);
 
     Ok(())
 }
@@ -2921,6 +3904,7 @@ fn rename_document(
 #[tauri::command]
 fn rename_document_column(
     app: AppHandle,
+    state: tauri::State<'_, AppState>,
     document_id: String,
     column_index: usize,
     new_column: String,
@@ -2948,6 +3932,10 @@ fn rename_document_column(
     }
 
     connection
+        .execute_batch("BEGIN TRANSACTION")
+        .map_err(|error| format!("Nao foi possivel iniciar a renomeacao da coluna: {error}"))?;
+
+    let rename_result = connection
         .execute(
             &format!(
                 "ALTER TABLE {} RENAME COLUMN {} TO {}",
@@ -2957,14 +3945,71 @@ fn rename_document_column(
             ),
             [],
         )
-        .map_err(|error| format!("Nao foi possivel renomear a coluna: {error}"))?;
+        .map_err(|error| format!("Nao foi possivel renomear a coluna: {error}"))
+        .and_then(|_| {
+            quality::rename_column_rules(&connection, &document_id, old_column, new_column)
+        });
+
+    if let Err(error) = rename_result {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error);
+    }
+
+    connection
+        .execute_batch("COMMIT")
+        .map_err(|error| format!("Nao foi possivel confirmar a renomeacao da coluna: {error}"))?;
+    invalidate_profile(&state, &document_id, old_column);
+    invalidate_quality(&state, &document_id);
 
     get_columns(&connection, &table_name)
 }
 
 #[tauri::command]
+fn preview_transformation(
+    app: AppHandle,
+    document_id: String,
+    transformation: transformations::Transformation,
+) -> Result<transformations::TransformationPreview, String> {
+    let connection = open_database(&app)?;
+    let table_name = get_document_table(&connection, &document_id)?;
+
+    transformations::preview_transformation(&connection, &table_name, &transformation)
+}
+
+#[tauri::command]
+fn apply_transformation(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    document_id: String,
+    transformation: transformations::Transformation,
+) -> Result<transformations::AppliedTransformation, String> {
+    lock_document_for_transformation(&state, &document_id)?;
+
+    let result = (|| {
+        let connection = open_database(&app)?;
+        let table_name = get_document_table(&connection, &document_id)?;
+        let column = transformation.column.clone();
+        let now = now_millis()?;
+        let applied = transformations::apply_transformation(
+            &connection,
+            &document_id,
+            &table_name,
+            &transformation,
+            now,
+        )?;
+        invalidate_profile(&state, &document_id, &column);
+        invalidate_quality_column(&state, &document_id, &column);
+        Ok(applied)
+    })();
+
+    unlock_document_for_transformation(&state, &document_id);
+    result
+}
+
+#[tauri::command]
 fn update_document_cell(
     app: AppHandle,
+    state: tauri::State<'_, AppState>,
     document_id: String,
     row_id: i64,
     column: String,
@@ -3005,6 +4050,8 @@ fn update_document_cell(
     if updated == 0 {
         return Err("Linha nao encontrada para atualizacao.".to_string());
     }
+    invalidate_profile(&state, &document_id, &column);
+    invalidate_quality_column(&state, &document_id, &column);
 
     Ok(CellUpdateResult {
         row_id,
@@ -3194,6 +4241,7 @@ fn get_table_page(
     get_page_from_source(
         &connection,
         &format!("SELECT * FROM {}", table_sql(&table_name)),
+        Some(&table_name),
         columns,
         offset,
         limit,
@@ -3225,6 +4273,7 @@ fn get_table_window(
             quoted_identifier(DUCKDB_ROW_ID_ALIAS),
             table_sql(&table_name)
         ),
+        Some(&table_name),
         columns,
         column_types,
         Some(quoted_identifier(DUCKDB_ROW_ID_ALIAS)),
@@ -3253,6 +4302,7 @@ fn get_sql_page(
     get_page_from_source(
         &connection,
         &sql,
+        None,
         columns,
         offset,
         limit,
@@ -3279,6 +4329,7 @@ fn get_sql_window(
     get_window_from_source(
         &connection,
         &sql,
+        None,
         columns,
         HashMap::new(),
         None,
@@ -3294,6 +4345,7 @@ fn get_sql_window(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(AppState::default())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
@@ -3302,6 +4354,15 @@ pub fn run() {
             create_workspace,
             update_workspace,
             import_document,
+            get_column_profile,
+            list_quality_rules,
+            create_quality_rule,
+            update_quality_rule,
+            delete_quality_rule,
+            validate_quality_rules,
+            get_quality_rule_violations,
+            preview_transformation,
+            apply_transformation,
             list_documents,
             delete_document,
             rename_document,
@@ -3457,5 +4518,33 @@ mod tests {
 
         assert_eq!(rows, 2);
         assert_eq!(code, "001234");
+    }
+
+    #[test]
+    fn profiling_infers_excel_serial_dates_with_interpreted_example() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute("CREATE TABLE serial_profile_test (DATA VARCHAR)", [])
+            .unwrap();
+        for value in ["33500", "33639", "34122", "35001"] {
+            connection
+                .execute("INSERT INTO serial_profile_test VALUES (?)", params![value])
+                .unwrap();
+        }
+
+        let source = profile_filled_source_sql("serial_profile_test", "DATA");
+        let inferred = infer_column_type(&connection, &source, 4).unwrap();
+        let stats = get_date_stats(&connection, &source, inferred.date_source.as_deref())
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(inferred.inferred_type, "date");
+        assert_eq!(inferred.date_source.as_deref(), Some("excel_serial"));
+        assert_eq!(
+            stats.predominant_format.as_deref(),
+            Some("Serial de data do Excel")
+        );
+        assert_eq!(stats.example_original.as_deref(), Some("33500"));
+        assert!(stats.example_interpreted.is_some());
     }
 }
