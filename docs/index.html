@@ -325,6 +325,62 @@
         gap: 18px;
       }
 
+      .blog-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .post-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, var(--panel), rgba(18, 26, 37, 0.74));
+        padding: 20px;
+      }
+
+      .post-card.featured {
+        min-height: 100%;
+        background:
+          linear-gradient(180deg, rgba(34, 197, 94, 0.12), rgba(18, 26, 37, 0.78)),
+          var(--panel);
+      }
+
+      .post-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .post-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .post-card h3 {
+        margin-bottom: 8px;
+        font-size: clamp(1.2rem, 2vw, 1.7rem);
+        line-height: 1.12;
+      }
+
+      .post-card h4 {
+        margin: 0 0 10px;
+        color: var(--muted-strong);
+        font-size: 1rem;
+        line-height: 1.32;
+      }
+
+      .post-card p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
       .caption {
         margin: 0;
         padding: 13px 15px;
@@ -460,6 +516,7 @@
         .feature-grid,
         .sales-grid,
         .stack,
+        .blog-layout,
         .capture-grid,
         .proof {
           grid-template-columns: 1fr;
@@ -477,6 +534,7 @@
         <nav class="nav" aria-label="Navegação principal">
           <a href="#recursos">Recursos</a>
           <a href="#por-que-usar">Por que usar</a>
+          <a href="#blog">Blog</a>
           <a href="#interface">Interface</a>
           <a href="https://github.com/Zigtecnologia-web/valtron#readme">README</a>
         </nav>
@@ -706,6 +764,74 @@
                 Painel lateral com workspaces e documentos importados.
               </figcaption>
             </figure>
+          </div>
+        </div>
+      </section>
+
+      <section id="blog" class="sales-band">
+        <div class="shell">
+          <div class="section-heading">
+            <p class="eyebrow">Blog</p>
+            <h2>Postagens sobre evolução, decisões técnicas e uso do Valtron.</h2>
+            <p>
+              Um espaço para registrar novidades do produto, explicar escolhas
+              de arquitetura e organizar textos sobre preparação de dados.
+            </p>
+          </div>
+
+          <div class="blog-layout">
+            <article class="post-card featured">
+              <div class="post-meta">
+                <span>Produto</span>
+                <span>15 ago 2026</span>
+              </div>
+              <h3>Transformações com preview chegam ao Valtron.</h3>
+              <h4>
+                A preparação de dados passa a seguir o fluxo configurar,
+                visualizar impacto e só então aplicar.
+              </h4>
+              <p>
+                A nova camada de Transformar conecta profiling, qualidade e
+                operações em massa no DuckDB. A primeira entrega inclui trim,
+                maiúsculas, minúsculas, localizar/substituir, preenchimento à
+                esquerda e conversão de serial Excel para data.
+              </p>
+            </article>
+
+            <div class="post-list">
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Qualidade</span>
+                  <span>14 ago 2026</span>
+                </div>
+                <h3>Entender antes de corrigir.</h3>
+                <h4>
+                  Profiling e regras de qualidade ajudam a separar problema de
+                  transformação.
+                </h4>
+                <p>
+                  O Valtron mantém análise, validação e transformação como
+                  etapas distintas para evitar mudanças automáticas que
+                  escondem a origem dos dados.
+                </p>
+              </article>
+
+              <article class="post-card">
+                <div class="post-meta">
+                  <span>Roadmap</span>
+                  <span>Em breve</span>
+                </div>
+                <h3>Receitas de preparação reutilizáveis.</h3>
+                <h4>
+                  A próxima etapa é salvar sequências de transformações para
+                  aplicar em novos documentos.
+                </h4>
+                <p>
+                  Receitas devem preservar a ordem das etapas, validar colunas
+                  necessárias e oferecer preview antes da execução completa.
+                </p>
+              </article>
+            </div>
           </div>
         </div>
       </section>
