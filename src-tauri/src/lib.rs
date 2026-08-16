@@ -37,6 +37,14 @@ const MAX_HEADER_SCAN_ROWS: u32 = 20;
 const PROFILE_BUCKET_COUNT: i64 = 12;
 const EXCEL_SERIAL_DATE_INFERENCE_THRESHOLD: f64 = 0.90;
 
+fn log_excel_import_error(stage: &str, sheet_name: Option<&str>, error: &str, duration: Duration) {
+    let sheet_name = sheet_name.unwrap_or("");
+    eprintln!(
+        "EXCEL_IMPORT_ERROR\nstage: {stage}\nsheet_name: {sheet_name}\nerror: {error}\nduration_ms: {}",
+        duration.as_millis()
+    );
+}
+
 #[derive(Default)]
 struct AppState {
     column_profile_cache: Mutex<HashMap<String, ColumnProfile>>,
@@ -1207,7 +1215,7 @@ fn inspect_excel_workbook_metadata_internal(
             format!("Nao foi possivel interpretar os metadados do workbook: {error}")
         })? {
             Event::Start(element) | Event::Empty(element)
-                if element.name().as_ref() == b"sheet" =>
+                if element.local_name().as_ref() == b"sheet" =>
             {
                 let mut name = None;
                 let mut visibility = "visible".to_string();
@@ -1254,7 +1262,7 @@ fn inspect_excel_workbook_metadata_internal(
     }
 
     if sheets.is_empty() {
-        return Err("O arquivo nao possui planilhas.".to_string());
+        return Err("O arquivo nao possui planilhas importaveis.".to_string());
     }
 
     Ok(sheets)
@@ -1267,10 +1275,11 @@ fn inspect_excel_workbook_metadata(file_path: &PathBuf) -> Result<Vec<ExcelSheet
         .collect())
 }
 
-fn first_xlsx_sheet_name_from_workbook_xml(file_path: &PathBuf) -> Option<String> {
-    inspect_excel_workbook_metadata(file_path)
-        .ok()
-        .and_then(|sheets| sheets.into_iter().next().map(|sheet| sheet.name))
+fn first_xlsx_sheet_name_from_workbook_xml(file_path: &PathBuf) -> Result<Option<String>, String> {
+    Ok(inspect_excel_workbook_metadata(file_path)?
+        .into_iter()
+        .next()
+        .map(|sheet| sheet.name))
 }
 
 fn normalize_workbook_target(target: &str) -> String {
@@ -1316,7 +1325,7 @@ fn worksheet_xml_path(file_path: &PathBuf, sheet_name: &str) -> Result<String, S
             .map_err(|error| format!("Nao foi possivel interpretar relacionamentos: {error}"))?
         {
             Event::Start(element) | Event::Empty(element)
-                if element.name().as_ref() == b"Relationship" =>
+                if element.local_name().as_ref() == b"Relationship" =>
             {
                 let mut id = None;
                 let mut target = None;
@@ -1411,11 +1420,11 @@ fn read_shared_strings_subset(
         match reader.read_event_into(&mut buffer).map_err(|error| {
             format!("Nao foi possivel interpretar strings compartilhadas: {error}")
         })? {
-            Event::Start(element) if element.name().as_ref() == b"si" => {
+            Event::Start(element) if element.local_name().as_ref() == b"si" => {
                 in_shared_item = true;
                 current_text.clear();
             }
-            Event::End(element) if element.name().as_ref() == b"si" => {
+            Event::End(element) if element.local_name().as_ref() == b"si" => {
                 if required_indices.contains(&current_index) {
                     values.insert(current_index, current_text.clone());
                 }
@@ -1426,10 +1435,10 @@ fn read_shared_strings_subset(
                 in_shared_item = false;
                 in_text = false;
             }
-            Event::Start(element) if in_shared_item && element.name().as_ref() == b"t" => {
+            Event::Start(element) if in_shared_item && element.local_name().as_ref() == b"t" => {
                 in_text = true;
             }
-            Event::End(element) if element.name().as_ref() == b"t" => {
+            Event::End(element) if element.local_name().as_ref() == b"t" => {
                 in_text = false;
             }
             Event::Text(text) if in_shared_item && in_text => {
@@ -1475,7 +1484,7 @@ fn scan_sheet_header_rows(
         match reader.read_event_into(&mut buffer).map_err(|error| {
             format!("Nao foi possivel interpretar a planilha '{sheet_name}': {error}")
         })? {
-            Event::Start(element) if element.name().as_ref() == b"row" => {
+            Event::Start(element) if element.local_name().as_ref() == b"row" => {
                 current_row = 0;
                 for attribute in element.attributes().with_checks(false).flatten() {
                     if attribute.key.as_ref() == b"r" {
@@ -1491,7 +1500,7 @@ fn scan_sheet_header_rows(
                     break;
                 }
             }
-            Event::Start(element) if element.name().as_ref() == b"c" => {
+            Event::Start(element) if element.local_name().as_ref() == b"c" => {
                 in_cell = current_row > 0 && current_row <= MAX_HEADER_SCAN_ROWS;
                 current_column = 0;
                 current_cell_type.clear();
@@ -1525,19 +1534,21 @@ fn scan_sheet_header_rows(
             }
             Event::Start(element)
                 if in_cell
-                    && (element.name().as_ref() == b"v" || element.name().as_ref() == b"t") =>
+                    && (element.local_name().as_ref() == b"v"
+                        || element.local_name().as_ref() == b"t") =>
             {
                 capture_text = true;
             }
             Event::End(element)
-                if element.name().as_ref() == b"v" || element.name().as_ref() == b"t" =>
+                if element.local_name().as_ref() == b"v"
+                    || element.local_name().as_ref() == b"t" =>
             {
                 capture_text = false;
             }
             Event::Text(text) if in_cell && capture_text => {
                 current_cell_text.push_str(&decode_xml_text(text));
             }
-            Event::End(element) if element.name().as_ref() == b"c" => {
+            Event::End(element) if element.local_name().as_ref() == b"c" => {
                 if in_cell {
                     let value = if current_cell_type == "s" {
                         current_cell_text.trim().parse::<usize>().ok().map(|index| {
@@ -1776,7 +1787,14 @@ fn inspect_excel_workbook_blocking(path: String) -> Result<ExcelWorkbookInspecti
         .and_then(|name| name.to_str())
         .unwrap_or("arquivo.xlsx")
         .to_string();
-    let sheets = inspect_excel_workbook_metadata(&file_path)?;
+    let sheets = inspect_excel_workbook_metadata(&file_path).map_err(|error| {
+        log_excel_import_error("inspect_excel_workbook", None, &error, start.elapsed());
+        if error == "O arquivo nao possui planilhas importaveis." {
+            error
+        } else {
+            "Nao foi possivel ler a estrutura deste arquivo Excel.".to_string()
+        }
+    })?;
 
     Ok(ExcelWorkbookInspection {
         file_name,
@@ -3182,10 +3200,22 @@ fn import_xlsx_blocking(
             Some(name) if !name.trim().is_empty() => name.to_string(),
             _ => {
                 let inspection_start = Instant::now();
-                let detected = first_xlsx_sheet_name_from_workbook_xml(&file_path)
-                    .unwrap_or_else(|| "Primeira planilha".to_string());
+                let detected =
+                    first_xlsx_sheet_name_from_workbook_xml(&file_path).map_err(|error| {
+                        log_excel_import_error(
+                            "inspect_excel_workbook",
+                            None,
+                            &error,
+                            inspection_start.elapsed(),
+                        );
+                        if error == "O arquivo nao possui planilhas importaveis." {
+                            error
+                        } else {
+                            "Nao foi possivel ler a estrutura deste arquivo Excel.".to_string()
+                        }
+                    })?;
                 performance.excel_workbook_inspection += inspection_start.elapsed();
-                detected
+                detected.unwrap_or_else(|| "Primeira planilha".to_string())
             }
         };
         if let Some(duration) = workbook_inspection_ms {
@@ -3194,7 +3224,15 @@ fn import_xlsx_blocking(
         performance.data_preparation += preparation_start.elapsed();
 
         let header_detection_start = Instant::now();
-        let header_detection = detect_excel_header(&file_path, &sheet_name)?;
+        let header_detection = detect_excel_header(&file_path, &sheet_name).map_err(|error| {
+            log_excel_import_error(
+                "detect_excel_header",
+                Some(&sheet_name),
+                &error,
+                header_detection_start.elapsed(),
+            );
+            format!("Nao foi possivel identificar a estrutura da planilha \"{sheet_name}\".")
+        })?;
         let range = xlsx_range_for_detection(&header_detection)?;
         let header_detection_elapsed = header_detection_start.elapsed();
         performance.excel_header_detection += header_detection_elapsed;
@@ -3210,7 +3248,16 @@ fn import_xlsx_blocking(
             &table_name,
             Some(&sheet_name),
             Some(&range),
-        )?;
+        )
+        .map_err(|error| {
+            log_excel_import_error(
+                "duckdb_read_xlsx",
+                Some(&sheet_name),
+                &error,
+                duckdb_xlsx_start.elapsed(),
+            );
+            format!("Nao foi possivel importar a planilha \"{sheet_name}\".")
+        })?;
         let duckdb_xlsx = duckdb_xlsx_start.elapsed();
         performance.duckdb += duckdb_xlsx;
         performance.duckdb_detail.xlsx_import += duckdb_xlsx;
@@ -5376,6 +5423,43 @@ mod tests {
         zip.finish().unwrap();
     }
 
+    fn write_test_prefixed_single_sheet_xlsx(path: &PathBuf, sheet_name: &str, sheet_xml: &str) {
+        let file = fs::File::create(path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "[Content_Types].xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "_rels/.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "xl/workbook.xml",
+            &format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><x:workbook xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><x:sheets><x:sheet name="{}" sheetId="1" r:id="rId1"/></x:sheets></x:workbook>"#, xml_escape(sheet_name)),
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "xl/_rels/workbook.xml.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><rel:Relationships xmlns:rel="http://schemas.openxmlformats.org/package/2006/relationships"><rel:Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></rel:Relationships>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(&mut zip, options, "xl/worksheets/sheet1.xml", sheet_xml).unwrap();
+        zip.finish().unwrap();
+    }
+
     fn write_test_multisheet_xlsx(path: &PathBuf) {
         let file = fs::File::create(path).unwrap();
         let mut zip = ZipWriter::new(file);
@@ -5463,6 +5547,30 @@ mod tests {
 
         assert_eq!(rows, 1);
         assert_eq!(value, "segunda");
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn ooxml_parser_accepts_prefixed_workbook_and_worksheet_elements() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "valtron_prefixed_ooxml_test_{}.xlsx",
+            now_millis().unwrap()
+        ));
+        let sheet = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ns1:worksheet xmlns:ns1="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><ns1:sheetData><ns1:row r="1"><ns1:c r="A1" t="str"><ns1:v>ID</ns1:v></ns1:c><ns1:c r="B1" t="str"><ns1:v>Nome</ns1:v></ns1:c><ns1:c r="C1" t="str"><ns1:v>Cidade</ns1:v></ns1:c></ns1:row><ns1:row r="2"><ns1:c r="A2" t="str"><ns1:v>1</ns1:v></ns1:c><ns1:c r="B2" t="str"><ns1:v>Ana</ns1:v></ns1:c><ns1:c r="C2" t="str"><ns1:v>Salvador</ns1:v></ns1:c></ns1:row><ns1:row r="3"><ns1:c r="A3" t="str"><ns1:v>2</ns1:v></ns1:c><ns1:c r="B3" t="str"><ns1:v>Joao</ns1:v></ns1:c><ns1:c r="C3" t="str"><ns1:v>Recife</ns1:v></ns1:c></ns1:row></ns1:sheetData></ns1:worksheet>"#;
+        write_test_prefixed_single_sheet_xlsx(&path, "Clientes", sheet);
+
+        let sheets = inspect_excel_workbook_metadata(&path).unwrap();
+        assert_eq!(sheets.len(), 1);
+        assert_eq!(sheets[0].name, "Clientes");
+
+        let detection = detect_excel_header(&path, "Clientes").unwrap();
+        assert_eq!(detection.header_row, 1);
+        assert_eq!(detection.column_count, 3);
+
+        let rows = scan_sheet_header_rows(&path, "Clientes").unwrap();
+        assert_eq!(rows[0].cells.get(&0).unwrap(), "ID");
+        assert_eq!(rows[1].cells.get(&1).unwrap(), "Ana");
         fs::remove_file(path).ok();
     }
 
