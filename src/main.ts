@@ -44,6 +44,10 @@ type ImportPerformance = {
   file_open_ms: number;
   xlsx_open_ms: number;
   worksheets_read_ms: number;
+  excel_workbook_inspection_ms?: number;
+  excel_header_detection_ms?: number;
+  excel_sheet_import_ms?: number;
+  excel_total_import_ms?: number;
   csv_generation_ms?: number;
   batch_size?: number;
   batch_count?: number;
@@ -71,6 +75,18 @@ type ImportPerformance = {
   total_ms: number;
 };
 
+type ExcelSheetInfo = {
+  name: string;
+  index: number;
+  visibility: string;
+};
+
+type ExcelWorkbookInspection = {
+  file_name: string;
+  sheets: ExcelSheetInfo[];
+  inspection_duration_ms: number;
+};
+
 type DocumentInfo = {
   id: string;
   workspace_id: string;
@@ -89,6 +105,28 @@ type WorkspaceInfo = {
   name: string;
   created_at: string;
   document_count: number;
+};
+
+type ExcelSheetSelection = {
+  sheetNames: Array<string | null>;
+  workbookInspectionMs: number | null;
+  inspection: ExcelWorkbookInspection | null;
+};
+
+type WorkspaceDestinationMode = "current" | "existing" | "new";
+
+type WorkspaceDestinationDraft = {
+  mode: WorkspaceDestinationMode;
+  workspaceId: string | null;
+  workspaceName: string;
+};
+
+type WorkspaceDestinationResult = WorkspaceDestinationDraft | "back" | null;
+
+type PendingWorkspaceImport = {
+  path: string;
+  fileName: string;
+  sheetNames: string[];
 };
 
 type ColumnFilter = {
@@ -239,6 +277,11 @@ let exportDocumentId: string | null = null;
 let exportInProgress = false;
 let deleteDocumentId: string | null = null;
 let resolveDeleteConfirmation: ((confirmed: boolean) => void) | null = null;
+let pendingWorkspaceDestination: ((destination: WorkspaceDestinationResult) => void) | null = null;
+let pendingImportSummary: ((confirmed: boolean) => void) | null = null;
+let workspaceDestinationImport: PendingWorkspaceImport | null = null;
+let selectedWorkspaceDestinationMode: WorkspaceDestinationMode = "current";
+let workspaceDestinationSearch = "";
 let installedVersion = "";
 let pendingUpdateInfo: UpdateInfo | null = null;
 let updateInProgress = false;
@@ -410,6 +453,52 @@ app.innerHTML = `
               <span id="export-button-spinner" class="loading-spinner export-button-spinner hidden" aria-hidden="true"></span>
               <span id="export-button-label">Exportar</span>
             </button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="sheet-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <section class="modal-panel sheet-panel">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Importar Excel</p>
+            <h2 id="sheet-title">Escolher planilha</h2>
+          </div>
+          <button id="cancel-sheet-x" class="icon-button modal-close" type="button" aria-label="Cancelar importacao">×</button>
+        </div>
+        <form id="sheet-form" class="sheet-form">
+          <div>
+            <p id="sheet-file-name" class="sheet-file-name"></p>
+            <p id="sheet-subtitle" class="toolbar-subtitle"></p>
+          </div>
+          <div class="sheet-tools">
+            <button id="select-all-sheets" class="ghost-button compact" type="button">Selecionar todas</button>
+          </div>
+          <div id="sheet-list" class="sheet-list"></div>
+          <div class="modal-actions">
+            <button id="cancel-sheet" class="ghost-button" type="button">Cancelar</button>
+            <button id="confirm-sheet" class="primary-button" type="submit">Importar</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="workspace-destination-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="workspace-destination-title">
+      <section class="modal-panel workspace-destination-panel">
+        <div class="modal-header">
+          <div>
+            <p id="workspace-destination-eyebrow" class="eyebrow">Organizar documentos</p>
+            <h2 id="workspace-destination-title">Destino da importacao</h2>
+          </div>
+          <button id="cancel-workspace-destination-x" class="icon-button modal-close" type="button" aria-label="Cancelar importacao">×</button>
+        </div>
+        <form id="workspace-destination-form" class="workspace-destination-form">
+          <div id="workspace-destination-content" class="workspace-destination-content"></div>
+          <div id="workspace-destination-error" class="workspace-destination-error" role="alert"></div>
+          <div class="modal-actions">
+            <button id="back-workspace-destination" class="ghost-button" type="button">Voltar</button>
+            <button id="confirm-workspace-destination" class="primary-button" type="submit">Continuar</button>
           </div>
         </form>
       </section>
@@ -662,6 +751,24 @@ const cancelExportXButton = document.querySelector<HTMLButtonElement>("#cancel-e
 const runExportButton = document.querySelector<HTMLButtonElement>("#run-export");
 const exportButtonSpinnerEl = document.querySelector<HTMLSpanElement>("#export-button-spinner");
 const exportButtonLabelEl = document.querySelector<HTMLSpanElement>("#export-button-label");
+const sheetModalEl = document.querySelector<HTMLDivElement>("#sheet-modal");
+const sheetFormEl = document.querySelector<HTMLFormElement>("#sheet-form");
+const sheetFileNameEl = document.querySelector<HTMLParagraphElement>("#sheet-file-name");
+const sheetSubtitleEl = document.querySelector<HTMLParagraphElement>("#sheet-subtitle");
+const sheetListEl = document.querySelector<HTMLDivElement>("#sheet-list");
+const cancelSheetButton = document.querySelector<HTMLButtonElement>("#cancel-sheet");
+const cancelSheetXButton = document.querySelector<HTMLButtonElement>("#cancel-sheet-x");
+const confirmSheetButton = document.querySelector<HTMLButtonElement>("#confirm-sheet");
+const selectAllSheetsButton = document.querySelector<HTMLButtonElement>("#select-all-sheets");
+const workspaceDestinationModalEl = document.querySelector<HTMLDivElement>("#workspace-destination-modal");
+const workspaceDestinationFormEl = document.querySelector<HTMLFormElement>("#workspace-destination-form");
+const workspaceDestinationEyebrowEl = document.querySelector<HTMLParagraphElement>("#workspace-destination-eyebrow");
+const workspaceDestinationTitleEl = document.querySelector<HTMLHeadingElement>("#workspace-destination-title");
+const workspaceDestinationContentEl = document.querySelector<HTMLDivElement>("#workspace-destination-content");
+const workspaceDestinationErrorEl = document.querySelector<HTMLDivElement>("#workspace-destination-error");
+const cancelWorkspaceDestinationXButton = document.querySelector<HTMLButtonElement>("#cancel-workspace-destination-x");
+const backWorkspaceDestinationButton = document.querySelector<HTMLButtonElement>("#back-workspace-destination");
+const confirmWorkspaceDestinationButton = document.querySelector<HTMLButtonElement>("#confirm-workspace-destination");
 const deleteModalEl = document.querySelector<HTMLDivElement>("#delete-modal");
 const deleteMessageEl = document.querySelector<HTMLParagraphElement>("#delete-message");
 const cancelDeleteButton = document.querySelector<HTMLButtonElement>("#cancel-delete");
@@ -951,6 +1058,18 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#039;");
 }
 
+function fileNameWithoutExtension(fileName: string) {
+  return fileName.replace(/\.[^.]+$/, "").trim() || fileName;
+}
+
+function workspaceById(workspaceId: string | null) {
+  if (!workspaceId) {
+    return null;
+  }
+
+  return workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
+}
+
 function cellDisplayValue(value: CellValue) {
   return value === null ? "NULL" : value;
 }
@@ -1112,6 +1231,10 @@ function renderPerformanceRows(performance: ImportPerformance | null) {
     ["Abertura do arquivo", formatDuration(performance.file_open_ms)],
     ["Abertura/descompactacao XLSX", formatDuration(performance.xlsx_open_ms)],
     ["Leitura/parse da planilha", formatDuration(performance.worksheets_read_ms)],
+    ["Inspecao do workbook", formatDuration(performance.excel_workbook_inspection_ms ?? 0)],
+    ["Deteccao de cabecalho", formatDuration(performance.excel_header_detection_ms ?? 0)],
+    ["Importacao da planilha", formatDuration(performance.excel_sheet_import_ms ?? 0)],
+    ["Total Excel", formatDuration(performance.excel_total_import_ms ?? 0)],
     ["Geracao CSV", formatDuration(performance.csv_generation_ms ?? 0)],
     ["Tamanho do batch", formatNumber(performance.batch_size ?? 0)],
     ["Quantidade de batches", formatNumber(performance.batch_count ?? 0)],
@@ -3580,7 +3703,372 @@ function scheduleFilterReload() {
   }, FILTER_DEBOUNCE_MS);
 }
 
-async function importFile(path: string) {
+let pendingSheetSelection: ((sheetNames: string[] | null) => void) | null = null;
+
+function isExcelPath(path: string) {
+  return /\.(xlsx|xlsm)$/i.test(path);
+}
+
+function visibilityLabel(visibility: string) {
+  if (visibility === "hidden") {
+    return "Oculta";
+  }
+
+  if (visibility === "veryHidden") {
+    return "Muito oculta";
+  }
+
+  return "";
+}
+
+function closeSheetModal(result: string[] | null) {
+  sheetModalEl?.classList.add("hidden");
+  const resolve = pendingSheetSelection;
+  pendingSheetSelection = null;
+  resolve?.(result);
+}
+
+function updateSheetConfirmButton() {
+  if (!confirmSheetButton || !sheetListEl) {
+    return;
+  }
+
+  const count = sheetListEl.querySelectorAll<HTMLInputElement>('input[name="excel-sheet"]:checked').length;
+  confirmSheetButton.textContent = count === 1 ? "Importar 1 planilha" : `Importar ${formatNumber(count)} planilhas`;
+  confirmSheetButton.disabled = count === 0;
+}
+
+function setWorkspaceDestinationError(message: string) {
+  if (!workspaceDestinationErrorEl) {
+    return;
+  }
+
+  workspaceDestinationErrorEl.textContent = message;
+  workspaceDestinationErrorEl.classList.toggle("hidden", !message);
+}
+
+function closeWorkspaceDestinationModal(result: WorkspaceDestinationResult) {
+  workspaceDestinationModalEl?.classList.add("hidden");
+  workspaceDestinationImport = null;
+  workspaceDestinationSearch = "";
+  setWorkspaceDestinationError("");
+  const resolve = pendingWorkspaceDestination;
+  pendingWorkspaceDestination = null;
+  resolve?.(result);
+}
+
+function closeImportSummaryModal(confirmed: boolean) {
+  workspaceDestinationModalEl?.classList.add("hidden");
+  workspaceDestinationImport = null;
+  setWorkspaceDestinationError("");
+  const resolve = pendingImportSummary;
+  pendingImportSummary = null;
+  resolve?.(confirmed);
+}
+
+function renderWorkspaceDestinationOptions(importInfo: PendingWorkspaceImport) {
+  if (
+    !workspaceDestinationContentEl ||
+    !workspaceDestinationEyebrowEl ||
+    !workspaceDestinationTitleEl ||
+    !confirmWorkspaceDestinationButton
+  ) {
+    return;
+  }
+
+  const currentWorkspace = workspaceById(currentWorkspaceId);
+  const suggestedWorkspaceName = fileNameWithoutExtension(importInfo.fileName);
+  const existingWorkspaces = workspaces.filter((workspace) => workspace.id !== currentWorkspace?.id);
+  const normalizedSearch = workspaceDestinationSearch.trim().toLocaleLowerCase("pt-BR");
+  const filteredWorkspaces = normalizedSearch
+    ? existingWorkspaces.filter((workspace) => workspace.name.toLocaleLowerCase("pt-BR").includes(normalizedSearch))
+    : existingWorkspaces;
+
+  workspaceDestinationEyebrowEl.textContent = "Organizar documentos";
+  workspaceDestinationTitleEl.textContent = "Destino da importacao";
+  confirmWorkspaceDestinationButton.textContent = "Continuar";
+  confirmWorkspaceDestinationButton.disabled = false;
+  backWorkspaceDestinationButton?.classList.remove("hidden");
+
+  if (!currentWorkspace && selectedWorkspaceDestinationMode === "current") {
+    selectedWorkspaceDestinationMode = existingWorkspaces.length > 0 ? "existing" : "new";
+  }
+
+  if (selectedWorkspaceDestinationMode === "existing" && existingWorkspaces.length === 0) {
+    selectedWorkspaceDestinationMode = currentWorkspace ? "current" : "new";
+  }
+
+  workspaceDestinationContentEl.innerHTML = `
+    <div class="workspace-destination-intro">
+      <p class="sheet-file-name">${escapeHtml(importInfo.fileName)}</p>
+      <p class="toolbar-subtitle">Voce esta importando ${formatNumber(importInfo.sheetNames.length)} planilhas.</p>
+    </div>
+    <fieldset class="workspace-destination-options">
+      ${
+        currentWorkspace
+          ? `
+            <label class="workspace-destination-option">
+              <input type="radio" name="workspace-destination-mode" value="current" ${
+                selectedWorkspaceDestinationMode === "current" ? "checked" : ""
+              } />
+              <span>
+                <strong>Workspace atual</strong>
+                <small>${escapeHtml(currentWorkspace.name)}</small>
+              </span>
+            </label>
+          `
+          : ""
+      }
+      <label class="workspace-destination-option ${existingWorkspaces.length === 0 ? "disabled" : ""}">
+        <input type="radio" name="workspace-destination-mode" value="existing" ${
+          selectedWorkspaceDestinationMode === "existing" ? "checked" : ""
+        } ${existingWorkspaces.length === 0 ? "disabled" : ""} />
+        <span>
+          <strong>Outro workspace</strong>
+          <small>${existingWorkspaces.length === 0 ? "Nenhum outro workspace disponivel" : "Escolher existente"}</small>
+        </span>
+      </label>
+      ${
+        selectedWorkspaceDestinationMode === "existing" && existingWorkspaces.length > 0
+          ? `
+            <div class="workspace-picker">
+              <input id="workspace-destination-search" class="workspace-destination-input" value="${escapeHtml(
+                workspaceDestinationSearch,
+              )}" placeholder="Buscar workspace..." autocomplete="off" />
+              <div class="workspace-picker-list">
+                ${
+                  filteredWorkspaces.length
+                    ? filteredWorkspaces
+                        .map(
+                          (workspace) => `
+                            <label class="workspace-picker-item">
+                              <input type="radio" name="workspace-destination-existing" value="${escapeHtml(workspace.id)}" ${
+                                workspace.id === workspaceDestinationFormEl?.dataset.workspaceId ? "checked" : ""
+                              } />
+                              <span>
+                                <strong>${escapeHtml(workspace.name)}</strong>
+                                <small>${formatNumber(workspace.document_count)} documento(s)</small>
+                              </span>
+                            </label>
+                          `,
+                        )
+                        .join("")
+                    : `<p class="workspace-picker-empty">Nenhum workspace encontrado.</p>`
+                }
+              </div>
+            </div>
+          `
+          : ""
+      }
+      <label class="workspace-destination-option">
+        <input type="radio" name="workspace-destination-mode" value="new" ${
+          selectedWorkspaceDestinationMode === "new" ? "checked" : ""
+        } />
+        <span>
+          <strong>Criar novo workspace</strong>
+          <small>O workspace sera criado somente ao importar.</small>
+        </span>
+      </label>
+      ${
+        selectedWorkspaceDestinationMode === "new"
+          ? `
+            <div class="workspace-new-name">
+              <label for="workspace-destination-name">Nome do workspace</label>
+              <input id="workspace-destination-name" class="workspace-destination-input" value="${escapeHtml(
+                workspaceDestinationFormEl?.dataset.workspaceName || suggestedWorkspaceName,
+              )}" autocomplete="off" />
+            </div>
+          `
+          : ""
+      }
+    </fieldset>
+  `;
+
+  workspaceDestinationContentEl
+    .querySelector<HTMLInputElement>('input[name="workspace-destination-mode"]:checked')
+    ?.focus();
+}
+
+function selectedWorkspaceDestinationDraft(): WorkspaceDestinationDraft | null {
+  const mode =
+    workspaceDestinationContentEl?.querySelector<HTMLInputElement>('input[name="workspace-destination-mode"]:checked')
+      ?.value ?? selectedWorkspaceDestinationMode;
+
+  if (mode === "current") {
+    const workspace = workspaceById(currentWorkspaceId);
+    if (!workspace) {
+      setWorkspaceDestinationError("Selecione um workspace atual ou escolha outro destino.");
+      return null;
+    }
+    return { mode: "current", workspaceId: workspace.id, workspaceName: workspace.name };
+  }
+
+  if (mode === "existing") {
+    const workspaceId =
+      workspaceDestinationContentEl?.querySelector<HTMLInputElement>('input[name="workspace-destination-existing"]:checked')
+        ?.value ?? null;
+    const workspace = workspaceById(workspaceId);
+    if (!workspace) {
+      setWorkspaceDestinationError("Escolha um workspace existente.");
+      return null;
+    }
+    return { mode: "existing", workspaceId: workspace.id, workspaceName: workspace.name };
+  }
+
+  const name = workspaceDestinationContentEl?.querySelector<HTMLInputElement>("#workspace-destination-name")?.value.trim() ?? "";
+  if (!name) {
+    setWorkspaceDestinationError("Digite um nome para o workspace.");
+    workspaceDestinationContentEl?.querySelector<HTMLInputElement>("#workspace-destination-name")?.focus();
+    return null;
+  }
+
+  return { mode: "new", workspaceId: null, workspaceName: name };
+}
+
+function chooseWorkspaceDestination(importInfo: PendingWorkspaceImport): Promise<WorkspaceDestinationResult> {
+  if (!workspaceDestinationModalEl || !workspaceDestinationFormEl || !workspaceDestinationContentEl) {
+    return Promise.resolve({
+      mode: "current",
+      workspaceId: currentWorkspaceId,
+      workspaceName: selectedWorkspace()?.name ?? "Workspace atual",
+    });
+  }
+
+  workspaceDestinationImport = importInfo;
+  selectedWorkspaceDestinationMode = currentWorkspaceId ? "current" : workspaces.length > 0 ? "existing" : "new";
+  workspaceDestinationFormEl.dataset.workspaceId = workspaces.find((workspace) => workspace.id !== currentWorkspaceId)?.id ?? "";
+  workspaceDestinationFormEl.dataset.workspaceName = fileNameWithoutExtension(importInfo.fileName);
+  workspaceDestinationSearch = "";
+  setWorkspaceDestinationError("");
+  renderWorkspaceDestinationOptions(importInfo);
+  workspaceDestinationModalEl.classList.remove("hidden");
+
+  return new Promise((resolve) => {
+    pendingWorkspaceDestination = resolve;
+  });
+}
+
+function renderImportSummary(importInfo: PendingWorkspaceImport, destination: WorkspaceDestinationDraft) {
+  if (
+    !workspaceDestinationContentEl ||
+    !workspaceDestinationEyebrowEl ||
+    !workspaceDestinationTitleEl ||
+    !confirmWorkspaceDestinationButton
+  ) {
+    return;
+  }
+
+  workspaceDestinationEyebrowEl.textContent = "Resumo";
+  workspaceDestinationTitleEl.textContent = `Importar ${formatNumber(importInfo.sheetNames.length)} planilhas`;
+  confirmWorkspaceDestinationButton.textContent = `Importar ${formatNumber(importInfo.sheetNames.length)} planilhas`;
+  confirmWorkspaceDestinationButton.disabled = false;
+  backWorkspaceDestinationButton?.classList.remove("hidden");
+  workspaceDestinationContentEl.innerHTML = `
+    <div class="import-summary">
+      <dl>
+        <div>
+          <dt>Arquivo</dt>
+          <dd>${escapeHtml(importInfo.fileName)}</dd>
+        </div>
+        <div>
+          <dt>Destino</dt>
+          <dd>${escapeHtml(destination.workspaceName)}</dd>
+        </div>
+      </dl>
+      <div>
+        <p class="toolbar-title">Documentos</p>
+        <ul class="import-summary-sheets">
+          ${importInfo.sheetNames.map((sheetName) => `<li>${escapeHtml(sheetName)}</li>`).join("")}
+        </ul>
+      </div>
+    </div>
+  `;
+}
+
+function confirmImportSummary(importInfo: PendingWorkspaceImport, destination: WorkspaceDestinationDraft): Promise<boolean> {
+  if (!workspaceDestinationModalEl || !workspaceDestinationFormEl || !workspaceDestinationContentEl) {
+    return Promise.resolve(true);
+  }
+
+  workspaceDestinationImport = importInfo;
+  setWorkspaceDestinationError("");
+  renderImportSummary(importInfo, destination);
+  workspaceDestinationModalEl.classList.remove("hidden");
+
+  return new Promise((resolve) => {
+    pendingImportSummary = resolve;
+  });
+}
+
+function chooseExcelSheets(inspection: ExcelWorkbookInspection): Promise<string[] | null> {
+  if (!sheetModalEl || !sheetFormEl || !sheetListEl || !sheetFileNameEl || !sheetSubtitleEl) {
+    return Promise.resolve(inspection.sheets[0] ? [inspection.sheets[0].name] : null);
+  }
+
+  sheetFileNameEl.textContent = inspection.file_name;
+  sheetSubtitleEl.textContent = `${formatNumber(inspection.sheets.length)} planilhas encontradas.`;
+  sheetListEl.innerHTML = inspection.sheets
+    .map((sheet) => {
+      const visibility = visibilityLabel(sheet.visibility);
+      return `
+        <label class="sheet-option">
+          <input type="checkbox" name="excel-sheet" value="${escapeHtml(sheet.name)}" checked />
+          <span class="sheet-option-copy">
+            <strong>${escapeHtml(sheet.name)}</strong>
+            ${visibility ? `<small>${escapeHtml(visibility)}</small>` : ""}
+          </span>
+        </label>
+      `;
+    })
+    .join("");
+  sheetModalEl.classList.remove("hidden");
+  sheetListEl.querySelector<HTMLInputElement>('input[name="excel-sheet"]')?.focus();
+  updateSheetConfirmButton();
+
+  return new Promise((resolve) => {
+    pendingSheetSelection = resolve;
+  });
+}
+
+async function resolveExcelSheetForImport(path: string) {
+  if (!isExcelPath(path)) {
+    return { sheetNames: [null], workbookInspectionMs: null, inspection: null };
+  }
+
+  setStatus("Lendo estrutura do arquivo...");
+  const inspection = await invoke<ExcelWorkbookInspection>("inspect_excel_workbook", { path });
+
+  if (inspection.sheets.length === 0) {
+    throw new Error("O arquivo nao possui planilhas.");
+  }
+
+  if (inspection.sheets.length === 1) {
+    return {
+      sheetNames: [inspection.sheets[0].name],
+      workbookInspectionMs: inspection.inspection_duration_ms,
+      inspection,
+    };
+  }
+
+  const sheetNames = await chooseExcelSheets(inspection);
+
+  if (!sheetNames || sheetNames.length === 0) {
+    return null;
+  }
+
+  return {
+    sheetNames,
+    workbookInspectionMs: inspection.inspection_duration_ms,
+    inspection,
+  };
+}
+
+async function importFile(
+  path: string,
+  sheetName: string | null = null,
+  workbookInspectionMs: number | null = null,
+  workspaceId: string | null = currentWorkspaceId,
+) {
   if (importButton) importButton.disabled = true;
   if (prevButton) prevButton.disabled = true;
   if (nextButton) nextButton.disabled = true;
@@ -3595,9 +4083,12 @@ async function importFile(path: string) {
     sortDirection = null;
     currentSummary = await invoke<ImportSummary>("import_document", {
       path,
-      workspaceId: currentWorkspaceId,
+      workspaceId,
+      sheetName,
+      workbookInspectionMs,
     });
     currentDocumentId = currentSummary.document_id;
+    currentWorkspaceId = workspaceId;
     await refreshWorkspaces();
     await refreshDocuments();
     renderSummary(currentSummary, null);
@@ -3605,6 +4096,7 @@ async function importFile(path: string) {
     setStatus("Importacao concluida.");
   } catch (error) {
     setStatus(String(error));
+    throw error;
   } finally {
     hideLoading();
     if (importButton) importButton.disabled = false;
@@ -3804,8 +4296,184 @@ importButton?.addEventListener("click", async () => {
   });
 
   if (typeof selected === "string") {
-    await importFile(selected);
+    try {
+      let sheetSelection: ExcelSheetSelection | null = await resolveExcelSheetForImport(selected);
+
+      if (!sheetSelection) {
+        setStatus("Importacao cancelada.");
+        return;
+      }
+
+      let destinationWorkspaceId = currentWorkspaceId;
+      let destinationResolved = false;
+
+      while (!destinationResolved) {
+        destinationWorkspaceId = currentWorkspaceId;
+
+        if (sheetSelection.sheetNames.length <= 1 || !sheetSelection.inspection) {
+          destinationResolved = true;
+          break;
+        }
+
+        await refreshWorkspaces();
+        const selectedSheets = sheetSelection.sheetNames.filter((sheetName): sheetName is string => Boolean(sheetName));
+        const importInfo = {
+          path: selected,
+          fileName: sheetSelection.inspection.file_name,
+          sheetNames: selectedSheets,
+        };
+        let destination: WorkspaceDestinationDraft | null = null;
+
+        while (!destination) {
+          const draft = await chooseWorkspaceDestination(importInfo);
+
+          if (draft === "back") {
+            const revisedSheetNames = await chooseExcelSheets(sheetSelection.inspection);
+
+            if (!revisedSheetNames || revisedSheetNames.length === 0) {
+              setStatus("Importacao cancelada.");
+              return;
+            }
+
+            sheetSelection = {
+              ...sheetSelection,
+              sheetNames: revisedSheetNames,
+            };
+            break;
+          }
+
+          if (!draft) {
+            setStatus("Importacao cancelada.");
+            return;
+          }
+
+          const confirmed = await confirmImportSummary(importInfo, draft);
+
+          if (confirmed) {
+            destination = draft;
+          }
+        }
+
+        if (!destination) {
+          continue;
+        }
+
+        if (destination.mode === "new") {
+          setStatus("Criando workspace...");
+          const workspace = await invoke<WorkspaceInfo>("create_workspace", { name: destination.workspaceName });
+          destinationWorkspaceId = workspace.id;
+          currentWorkspaceId = workspace.id;
+          await refreshWorkspaces();
+        } else {
+          destinationWorkspaceId = destination.workspaceId;
+          currentWorkspaceId = destination.workspaceId;
+        }
+
+        destinationResolved = true;
+      }
+
+      for (const [index, sheetName] of sheetSelection.sheetNames.entries()) {
+        const total = sheetSelection.sheetNames.length;
+
+        if (sheetName && total > 1) {
+          setStatus(`Importando planilha ${formatNumber(index + 1)} de ${formatNumber(total)}: ${sheetName}`);
+        }
+
+        await importFile(selected, sheetName, index === 0 ? sheetSelection.workbookInspectionMs : null, destinationWorkspaceId);
+      }
+    } catch (error) {
+      setStatus(String(error));
+    }
   }
+});
+
+sheetFormEl?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const selected = Array.from(
+    sheetListEl?.querySelectorAll<HTMLInputElement>('input[name="excel-sheet"]:checked') ?? [],
+  ).map((input) => input.value);
+  closeSheetModal(selected);
+});
+
+cancelSheetButton?.addEventListener("click", () => closeSheetModal(null));
+cancelSheetXButton?.addEventListener("click", () => closeSheetModal(null));
+sheetListEl?.addEventListener("change", updateSheetConfirmButton);
+selectAllSheetsButton?.addEventListener("click", () => {
+  sheetListEl?.querySelectorAll<HTMLInputElement>('input[name="excel-sheet"]').forEach((input) => {
+    input.checked = true;
+  });
+  updateSheetConfirmButton();
+});
+
+workspaceDestinationFormEl?.addEventListener("submit", (event) => {
+  event.preventDefault();
+
+  if (pendingImportSummary) {
+    closeImportSummaryModal(true);
+    return;
+  }
+
+  const destination = selectedWorkspaceDestinationDraft();
+
+  if (destination) {
+    closeWorkspaceDestinationModal(destination);
+  }
+});
+
+workspaceDestinationContentEl?.addEventListener("change", (event) => {
+  const target = event.target as HTMLInputElement;
+
+  if (target.name === "workspace-destination-mode") {
+    selectedWorkspaceDestinationMode = target.value as WorkspaceDestinationMode;
+    const nameInput = workspaceDestinationContentEl.querySelector<HTMLInputElement>("#workspace-destination-name");
+    if (nameInput && workspaceDestinationFormEl) {
+      workspaceDestinationFormEl.dataset.workspaceName = nameInput.value;
+    }
+    setWorkspaceDestinationError("");
+    if (workspaceDestinationImport) {
+      renderWorkspaceDestinationOptions(workspaceDestinationImport);
+    }
+  }
+
+  if (target.name === "workspace-destination-existing" && workspaceDestinationFormEl) {
+    workspaceDestinationFormEl.dataset.workspaceId = target.value;
+    setWorkspaceDestinationError("");
+  }
+});
+
+workspaceDestinationContentEl?.addEventListener("input", (event) => {
+  const target = event.target as HTMLInputElement;
+
+  if (target.id === "workspace-destination-search") {
+    workspaceDestinationSearch = target.value;
+    if (workspaceDestinationImport) {
+      renderWorkspaceDestinationOptions(workspaceDestinationImport);
+      workspaceDestinationContentEl.querySelector<HTMLInputElement>("#workspace-destination-search")?.focus();
+    }
+  }
+
+  if (target.id === "workspace-destination-name" && workspaceDestinationFormEl) {
+    workspaceDestinationFormEl.dataset.workspaceName = target.value;
+    setWorkspaceDestinationError("");
+  }
+});
+
+cancelWorkspaceDestinationXButton?.addEventListener("click", () => {
+  if (pendingImportSummary) {
+    closeImportSummaryModal(false);
+    return;
+  }
+
+  closeWorkspaceDestinationModal(null);
+});
+
+backWorkspaceDestinationButton?.addEventListener("click", () => {
+  if (pendingImportSummary) {
+    closeImportSummaryModal(false);
+    return;
+  }
+
+  closeWorkspaceDestinationModal("back");
 });
 
 documentsListEl?.addEventListener("click", async (event) => {

@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::{BufWriter, Read, Write},
+    io::{BufReader, BufWriter, Read, Write},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -18,7 +18,7 @@ use duckdb::{
     types::ValueRef,
     Connection, ToSql,
 };
-use quick_xml::{events::Event, Reader as XmlReader};
+use quick_xml::{events::Event, Reader as XmlReader, XmlVersion};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
@@ -33,6 +33,7 @@ const VALTRON_ROW_ID_COLUMN: &str = "_valtron_row_id";
 const DUCKDB_ROW_ID_ALIAS: &str = "__valtron_duckdb_rowid";
 const DEFAULT_WORKSPACE_ID: &str = "default";
 const MAX_COLUMNS: usize = 16_384;
+const MAX_HEADER_SCAN_ROWS: u32 = 20;
 const PROFILE_BUCKET_COUNT: i64 = 12;
 const EXCEL_SERIAL_DATE_INFERENCE_THRESHOLD: f64 = 0.90;
 
@@ -49,6 +50,9 @@ struct ImportPerformance {
     file_open: Duration,
     xlsx_open: Duration,
     worksheets_read: Duration,
+    excel_workbook_inspection: Duration,
+    excel_header_detection: Duration,
+    excel_sheet_import: Duration,
     csv_generation: Duration,
     cell_conversion: Duration,
     validation: Duration,
@@ -94,6 +98,14 @@ struct ImportPerformanceSnapshot {
     file_open_ms: u128,
     xlsx_open_ms: u128,
     worksheets_read_ms: u128,
+    #[serde(default)]
+    excel_workbook_inspection_ms: u128,
+    #[serde(default)]
+    excel_header_detection_ms: u128,
+    #[serde(default)]
+    excel_sheet_import_ms: u128,
+    #[serde(default)]
+    excel_total_import_ms: u128,
     #[serde(default)]
     csv_generation_ms: u128,
     #[serde(default)]
@@ -158,6 +170,14 @@ impl ImportPerformance {
             file_open_ms: Self::elapsed_ms(self.file_open),
             xlsx_open_ms: Self::elapsed_ms(self.xlsx_open),
             worksheets_read_ms: Self::elapsed_ms(self.worksheets_read),
+            excel_workbook_inspection_ms: Self::elapsed_ms(self.excel_workbook_inspection),
+            excel_header_detection_ms: Self::elapsed_ms(self.excel_header_detection),
+            excel_sheet_import_ms: Self::elapsed_ms(self.excel_sheet_import),
+            excel_total_import_ms: Self::elapsed_ms(
+                self.excel_workbook_inspection
+                    + self.excel_header_detection
+                    + self.excel_sheet_import,
+            ),
             csv_generation_ms: Self::elapsed_ms(self.csv_generation),
             batch_size: self.batch_detail.batch_size,
             batch_count: self.batch_detail.batch_count,
@@ -226,6 +246,10 @@ duckdb_xlsx_options: {}\n\
 abertura_arquivo_ms: {}\n\
 leitura_descompactacao_xlsx_ms: {}\n\
 leitura_planilhas_ms: {}\n\
+excel_workbook_inspection_ms: {}\n\
+excel_header_detection_ms: {}\n\
+excel_sheet_import_ms: {}\n\
+excel_total_import_ms: {}\n\
 csv_generation_ms: {}\n\
 batch_size: {}\n\
 batch_count: {}\n\
@@ -261,6 +285,14 @@ outros_percent: {outros_percent}%",
             Self::elapsed_ms(self.file_open),
             Self::elapsed_ms(self.xlsx_open),
             Self::elapsed_ms(self.worksheets_read),
+            Self::elapsed_ms(self.excel_workbook_inspection),
+            Self::elapsed_ms(self.excel_header_detection),
+            Self::elapsed_ms(self.excel_sheet_import),
+            Self::elapsed_ms(
+                self.excel_workbook_inspection
+                    + self.excel_header_detection
+                    + self.excel_sheet_import,
+            ),
             Self::elapsed_ms(self.csv_generation),
             self.batch_detail.batch_size,
             self.batch_detail.batch_count,
@@ -356,6 +388,52 @@ struct ImportSummary {
     imported_at: String,
     import_duration_ms: Option<u128>,
     import_performance: Option<ImportPerformanceSnapshot>,
+}
+
+#[derive(Clone, Serialize)]
+struct ExcelSheetInfo {
+    name: String,
+    index: usize,
+    visibility: String,
+}
+
+#[derive(Serialize)]
+struct ExcelWorkbookInspection {
+    file_name: String,
+    sheets: Vec<ExcelSheetInfo>,
+    inspection_duration_ms: u128,
+}
+
+#[derive(Clone)]
+struct ExcelSheetMetadata {
+    public: ExcelSheetInfo,
+    relationship_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct HeaderDetection {
+    header_row: u32,
+    column_count: usize,
+    rows_scanned: usize,
+    fallback_used: bool,
+}
+
+#[derive(Clone, Debug)]
+struct HeaderScanRow {
+    row_number: u32,
+    cells: HashMap<usize, String>,
+}
+
+#[derive(Clone, Debug)]
+enum ScannedCellValue {
+    Literal(String),
+    Shared(usize),
+}
+
+#[derive(Clone, Debug)]
+struct RawHeaderScanRow {
+    row_number: u32,
+    cells: HashMap<usize, ScannedCellValue>,
 }
 
 #[derive(Serialize)]
@@ -585,7 +663,10 @@ fn init_database(connection: &Connection) -> Result<(), String> {
                     column_count BIGINT NOT NULL,
                     imported_at TEXT NOT NULL,
                     import_duration_ms BIGINT,
-                    import_performance_json TEXT
+                    import_performance_json TEXT,
+                    source_type TEXT,
+                    source_file_name TEXT,
+                    source_sheet_name TEXT
                 )",
                 quoted_identifier(DOCUMENTS_TABLE),
                 DEFAULT_WORKSPACE_ID
@@ -597,6 +678,7 @@ fn init_database(connection: &Connection) -> Result<(), String> {
     ensure_document_workspace_column(connection)?;
     ensure_document_import_duration_column(connection)?;
     ensure_document_import_performance_column(connection)?;
+    ensure_document_source_columns(connection)?;
     assign_default_workspace_to_documents(connection)?;
     quality::init_database(connection)?;
     transformations::init_database(connection)?;
@@ -686,6 +768,45 @@ fn ensure_document_import_performance_column(connection: &Connection) -> Result<
             [],
         )
         .map_err(|error| format!("Nao foi possivel migrar metricas de importacao: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_document_text_column(
+    connection: &Connection,
+    column_name: &str,
+    error_context: &str,
+) -> Result<(), String> {
+    if column_exists(connection, DOCUMENTS_TABLE, column_name)? {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            &format!(
+                "ALTER TABLE {} ADD COLUMN {} TEXT",
+                quoted_identifier(DOCUMENTS_TABLE),
+                quoted_identifier(column_name)
+            ),
+            [],
+        )
+        .map_err(|error| format!("Nao foi possivel migrar {error_context}: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_document_source_columns(connection: &Connection) -> Result<(), String> {
+    ensure_document_text_column(connection, "source_type", "tipo da origem dos documentos")?;
+    ensure_document_text_column(
+        connection,
+        "source_file_name",
+        "arquivo de origem dos documentos",
+    )?;
+    ensure_document_text_column(
+        connection,
+        "source_sheet_name",
+        "planilha de origem dos documentos",
+    )?;
 
     Ok(())
 }
@@ -1025,6 +1146,8 @@ fn try_import_xlsx_direct_without_preopen(
     connection: &Connection,
     file_path: &PathBuf,
     table_name: &str,
+    sheet_name: Option<&str>,
+    range: Option<&str>,
 ) -> Result<(), String> {
     connection
         .execute("LOAD excel", [])
@@ -1033,13 +1156,22 @@ fn try_import_xlsx_direct_without_preopen(
     drop_table(connection, table_name)?;
 
     let xlsx_path = sql_string_literal(&file_path.to_string_lossy());
+    let sheet_sql = sheet_name
+        .map(|name| format!(",\n            sheet = {}", sql_string_literal(name)))
+        .unwrap_or_default();
+    let range_sql = range
+        .map(|value| format!(",\n            range = {}", sql_string_literal(value)))
+        .unwrap_or_default();
     let create_sql = format!(
         "CREATE TABLE {} AS
          SELECT *
          FROM read_xlsx(
             {xlsx_path},
             header = true,
-            all_varchar = true
+            all_varchar = true,
+            stop_at_empty = true
+            {sheet_sql}
+            {range_sql}
          )",
         quoted_identifier(table_name)
     );
@@ -1051,40 +1183,613 @@ fn try_import_xlsx_direct_without_preopen(
     Ok(())
 }
 
-fn first_xlsx_sheet_name_from_workbook_xml(file_path: &PathBuf) -> Option<String> {
-    let file = fs::File::open(file_path).ok()?;
-    let mut archive = ZipArchive::new(file).ok()?;
+fn inspect_excel_workbook_metadata_internal(
+    file_path: &PathBuf,
+) -> Result<Vec<ExcelSheetMetadata>, String> {
+    let file = fs::File::open(file_path)
+        .map_err(|error| format!("Nao foi possivel abrir o arquivo Excel: {error}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("Arquivo Excel invalido: {error}"))?;
     let mut workbook_xml = String::new();
     archive
         .by_name("xl/workbook.xml")
-        .ok()?
+        .map_err(|error| format!("Nao foi possivel ler os metadados do workbook: {error}"))?
         .read_to_string(&mut workbook_xml)
-        .ok()?;
+        .map_err(|error| format!("Nao foi possivel carregar os metadados do workbook: {error}"))?;
 
     let mut reader = XmlReader::from_str(&workbook_xml);
     reader.config_mut().trim_text(true);
     let mut buffer = Vec::new();
+    let mut sheets = Vec::new();
 
     loop {
-        match reader.read_event_into(&mut buffer).ok()? {
+        match reader.read_event_into(&mut buffer).map_err(|error| {
+            format!("Nao foi possivel interpretar os metadados do workbook: {error}")
+        })? {
             Event::Start(element) | Event::Empty(element)
                 if element.name().as_ref() == b"sheet" =>
             {
+                let mut name = None;
+                let mut visibility = "visible".to_string();
+                let mut relationship_id = None;
+
                 for attribute in element.attributes().with_checks(false).flatten() {
                     if attribute.key.as_ref() == b"name" {
-                        return attribute
-                            .decode_and_unescape_value(reader.decoder())
+                        name = attribute
+                            .decoded_and_normalized_value(XmlVersion::Explicit1_0, reader.decoder())
+                            .ok()
+                            .map(|value| value.into_owned());
+                    } else if attribute.key.as_ref() == b"state" {
+                        visibility = attribute
+                            .decoded_and_normalized_value(XmlVersion::Explicit1_0, reader.decoder())
+                            .map(|value| value.into_owned())
+                            .unwrap_or_else(|_| "visible".to_string());
+                    } else if attribute.key.as_ref() == b"r:id"
+                        || attribute.key.as_ref().ends_with(b":id")
+                        || attribute.key.as_ref() == b"id"
+                    {
+                        relationship_id = attribute
+                            .decoded_and_normalized_value(XmlVersion::Explicit1_0, reader.decoder())
                             .ok()
                             .map(|value| value.into_owned());
                     }
                 }
+
+                if let Some(name) = name {
+                    sheets.push(ExcelSheetMetadata {
+                        public: ExcelSheetInfo {
+                            name,
+                            index: sheets.len(),
+                            visibility,
+                        },
+                        relationship_id,
+                    });
+                }
             }
-            Event::Eof => return None,
+            Event::Eof => break,
             _ => {}
         }
 
         buffer.clear();
     }
+
+    if sheets.is_empty() {
+        return Err("O arquivo nao possui planilhas.".to_string());
+    }
+
+    Ok(sheets)
+}
+
+fn inspect_excel_workbook_metadata(file_path: &PathBuf) -> Result<Vec<ExcelSheetInfo>, String> {
+    Ok(inspect_excel_workbook_metadata_internal(file_path)?
+        .into_iter()
+        .map(|sheet| sheet.public)
+        .collect())
+}
+
+fn first_xlsx_sheet_name_from_workbook_xml(file_path: &PathBuf) -> Option<String> {
+    inspect_excel_workbook_metadata(file_path)
+        .ok()
+        .and_then(|sheets| sheets.into_iter().next().map(|sheet| sheet.name))
+}
+
+fn normalize_workbook_target(target: &str) -> String {
+    let target = target.trim_start_matches('/');
+
+    if target.starts_with("xl/") {
+        target.to_string()
+    } else {
+        format!("xl/{target}")
+    }
+}
+
+fn worksheet_xml_path(file_path: &PathBuf, sheet_name: &str) -> Result<String, String> {
+    let sheets = inspect_excel_workbook_metadata_internal(file_path)?;
+    let sheet = sheets
+        .iter()
+        .find(|sheet| sheet.public.name == sheet_name)
+        .ok_or_else(|| format!("A planilha '{sheet_name}' nao existe no arquivo."))?;
+    let relationship_id = sheet
+        .relationship_id
+        .as_deref()
+        .ok_or_else(|| format!("A planilha '{sheet_name}' nao possui relacionamento interno."))?;
+    let file = fs::File::open(file_path)
+        .map_err(|error| format!("Nao foi possivel abrir o arquivo Excel: {error}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("Arquivo Excel invalido: {error}"))?;
+    let mut relationships_xml = String::new();
+    archive
+        .by_name("xl/_rels/workbook.xml.rels")
+        .map_err(|error| format!("Nao foi possivel ler relacionamentos do workbook: {error}"))?
+        .read_to_string(&mut relationships_xml)
+        .map_err(|error| {
+            format!("Nao foi possivel carregar relacionamentos do workbook: {error}")
+        })?;
+
+    let mut reader = XmlReader::from_str(&relationships_xml);
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format!("Nao foi possivel interpretar relacionamentos: {error}"))?
+        {
+            Event::Start(element) | Event::Empty(element)
+                if element.name().as_ref() == b"Relationship" =>
+            {
+                let mut id = None;
+                let mut target = None;
+
+                for attribute in element.attributes().with_checks(false).flatten() {
+                    if attribute.key.as_ref() == b"Id" {
+                        id = attribute
+                            .decoded_and_normalized_value(XmlVersion::Explicit1_0, reader.decoder())
+                            .ok()
+                            .map(|value| value.into_owned());
+                    } else if attribute.key.as_ref() == b"Target" {
+                        target = attribute
+                            .decoded_and_normalized_value(XmlVersion::Explicit1_0, reader.decoder())
+                            .ok()
+                            .map(|value| value.into_owned());
+                    }
+                }
+
+                if id.as_deref() == Some(relationship_id) {
+                    return target
+                        .map(|target| normalize_workbook_target(&target))
+                        .ok_or_else(|| {
+                            format!("A planilha '{sheet_name}' nao possui alvo interno.")
+                        });
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+
+        buffer.clear();
+    }
+
+    Err(format!(
+        "Nao foi possivel localizar o XML interno da planilha '{sheet_name}'."
+    ))
+}
+
+fn parse_xlsx_cell_reference(reference: &str) -> Option<(u32, usize)> {
+    let mut column = 0usize;
+    let mut row = 0u32;
+    let mut seen_digit = false;
+
+    for byte in reference.bytes() {
+        if byte.is_ascii_alphabetic() && !seen_digit {
+            column = column * 26 + (byte.to_ascii_uppercase() - b'A' + 1) as usize;
+        } else if byte.is_ascii_digit() {
+            seen_digit = true;
+            row = row * 10 + (byte - b'0') as u32;
+        }
+    }
+
+    if column == 0 || row == 0 {
+        None
+    } else {
+        Some((row, column - 1))
+    }
+}
+
+fn decode_xml_text(text: quick_xml::events::BytesText<'_>) -> String {
+    text.decode()
+        .map(|value| value.into_owned())
+        .unwrap_or_default()
+}
+
+fn read_shared_strings_subset(
+    file_path: &PathBuf,
+    required_indices: &HashSet<usize>,
+) -> Result<HashMap<usize, String>, String> {
+    if required_indices.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let file = fs::File::open(file_path)
+        .map_err(|error| format!("Nao foi possivel abrir o arquivo Excel: {error}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("Arquivo Excel invalido: {error}"))?;
+    let Ok(mut shared_strings_file) = archive.by_name("xl/sharedStrings.xml") else {
+        return Ok(HashMap::new());
+    };
+    let max_required = required_indices.iter().copied().max().unwrap_or(0);
+    let mut reader = XmlReader::from_reader(BufReader::new(&mut shared_strings_file));
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    let mut current_index = 0usize;
+    let mut in_shared_item = false;
+    let mut in_text = false;
+    let mut current_text = String::new();
+    let mut values = HashMap::new();
+
+    loop {
+        match reader.read_event_into(&mut buffer).map_err(|error| {
+            format!("Nao foi possivel interpretar strings compartilhadas: {error}")
+        })? {
+            Event::Start(element) if element.name().as_ref() == b"si" => {
+                in_shared_item = true;
+                current_text.clear();
+            }
+            Event::End(element) if element.name().as_ref() == b"si" => {
+                if required_indices.contains(&current_index) {
+                    values.insert(current_index, current_text.clone());
+                }
+                if current_index >= max_required && values.len() == required_indices.len() {
+                    break;
+                }
+                current_index += 1;
+                in_shared_item = false;
+                in_text = false;
+            }
+            Event::Start(element) if in_shared_item && element.name().as_ref() == b"t" => {
+                in_text = true;
+            }
+            Event::End(element) if element.name().as_ref() == b"t" => {
+                in_text = false;
+            }
+            Event::Text(text) if in_shared_item && in_text => {
+                current_text.push_str(&decode_xml_text(text));
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+
+        buffer.clear();
+    }
+
+    Ok(values)
+}
+
+fn scan_sheet_header_rows(
+    file_path: &PathBuf,
+    sheet_name: &str,
+) -> Result<Vec<HeaderScanRow>, String> {
+    let worksheet_path = worksheet_xml_path(file_path, sheet_name)?;
+    let file = fs::File::open(file_path)
+        .map_err(|error| format!("Nao foi possivel abrir o arquivo Excel: {error}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("Arquivo Excel invalido: {error}"))?;
+    let mut worksheet_file = archive
+        .by_name(&worksheet_path)
+        .map_err(|error| format!("Nao foi possivel ler a planilha '{sheet_name}': {error}"))?;
+
+    let mut reader = XmlReader::from_reader(BufReader::new(&mut worksheet_file));
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    let mut rows: Vec<RawHeaderScanRow> = Vec::new();
+    let mut row_lookup: HashMap<u32, usize> = HashMap::new();
+    let mut current_row = 0u32;
+    let mut current_column = 0usize;
+    let mut current_cell_type = String::new();
+    let mut current_cell_text = String::new();
+    let mut in_cell = false;
+    let mut capture_text = false;
+    let mut required_shared_strings = HashSet::new();
+
+    loop {
+        match reader.read_event_into(&mut buffer).map_err(|error| {
+            format!("Nao foi possivel interpretar a planilha '{sheet_name}': {error}")
+        })? {
+            Event::Start(element) if element.name().as_ref() == b"row" => {
+                current_row = 0;
+                for attribute in element.attributes().with_checks(false).flatten() {
+                    if attribute.key.as_ref() == b"r" {
+                        current_row = attribute
+                            .decoded_and_normalized_value(XmlVersion::Explicit1_0, reader.decoder())
+                            .ok()
+                            .and_then(|value| value.parse::<u32>().ok())
+                            .unwrap_or(0);
+                    }
+                }
+
+                if current_row > MAX_HEADER_SCAN_ROWS {
+                    break;
+                }
+            }
+            Event::Start(element) if element.name().as_ref() == b"c" => {
+                in_cell = current_row > 0 && current_row <= MAX_HEADER_SCAN_ROWS;
+                current_column = 0;
+                current_cell_type.clear();
+                current_cell_text.clear();
+
+                if in_cell {
+                    for attribute in element.attributes().with_checks(false).flatten() {
+                        if attribute.key.as_ref() == b"r" {
+                            if let Some((row, column)) = attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Explicit1_0,
+                                    reader.decoder(),
+                                )
+                                .ok()
+                                .and_then(|value| parse_xlsx_cell_reference(&value))
+                            {
+                                current_row = row;
+                                current_column = column;
+                            }
+                        } else if attribute.key.as_ref() == b"t" {
+                            current_cell_type = attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Explicit1_0,
+                                    reader.decoder(),
+                                )
+                                .map(|value| value.into_owned())
+                                .unwrap_or_default();
+                        }
+                    }
+                }
+            }
+            Event::Start(element)
+                if in_cell
+                    && (element.name().as_ref() == b"v" || element.name().as_ref() == b"t") =>
+            {
+                capture_text = true;
+            }
+            Event::End(element)
+                if element.name().as_ref() == b"v" || element.name().as_ref() == b"t" =>
+            {
+                capture_text = false;
+            }
+            Event::Text(text) if in_cell && capture_text => {
+                current_cell_text.push_str(&decode_xml_text(text));
+            }
+            Event::End(element) if element.name().as_ref() == b"c" => {
+                if in_cell {
+                    let value = if current_cell_type == "s" {
+                        current_cell_text.trim().parse::<usize>().ok().map(|index| {
+                            required_shared_strings.insert(index);
+                            ScannedCellValue::Shared(index)
+                        })
+                    } else {
+                        Some(ScannedCellValue::Literal(current_cell_text.clone()))
+                    };
+
+                    if let Some(value) = value {
+                        let row_index = *row_lookup.entry(current_row).or_insert_with(|| {
+                            rows.push(RawHeaderScanRow {
+                                row_number: current_row,
+                                cells: HashMap::new(),
+                            });
+                            rows.len() - 1
+                        });
+                        rows[row_index].cells.insert(current_column, value);
+                    }
+                }
+
+                in_cell = false;
+                capture_text = false;
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+
+        buffer.clear();
+    }
+
+    let shared_strings = read_shared_strings_subset(file_path, &required_shared_strings)?;
+    let mut resolved_rows = rows
+        .into_iter()
+        .map(|row| HeaderScanRow {
+            row_number: row.row_number,
+            cells: row
+                .cells
+                .into_iter()
+                .map(|(column, value)| {
+                    let value = match value {
+                        ScannedCellValue::Literal(value) => value,
+                        ScannedCellValue::Shared(index) => {
+                            shared_strings.get(&index).cloned().unwrap_or_default()
+                        }
+                    };
+                    (column, value)
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    resolved_rows.sort_by_key(|row| row.row_number);
+
+    Ok(resolved_rows)
+}
+
+fn significant_columns(row: &HeaderScanRow) -> Vec<usize> {
+    let mut columns = row
+        .cells
+        .iter()
+        .filter_map(|(column, value)| {
+            if value.trim().is_empty() {
+                None
+            } else {
+                Some(*column)
+            }
+        })
+        .collect::<Vec<_>>();
+    columns.sort_unstable();
+    columns
+}
+
+fn row_string_count(row: &HeaderScanRow) -> usize {
+    row.cells
+        .values()
+        .filter(|value| value.chars().any(|character| character.is_alphabetic()))
+        .count()
+}
+
+fn detect_header_from_rows(rows: &[HeaderScanRow]) -> Result<HeaderDetection, String> {
+    let mut best: Option<(i32, u32, usize)> = None;
+
+    for (index, row) in rows.iter().enumerate() {
+        let columns = significant_columns(row);
+        let non_empty = columns.len();
+
+        if non_empty < 2 {
+            continue;
+        }
+
+        let next_columns = rows
+            .get(index + 1)
+            .map(significant_columns)
+            .unwrap_or_default();
+        let previous_non_empty = index
+            .checked_sub(1)
+            .and_then(|previous| rows.get(previous))
+            .map(significant_columns)
+            .map(|columns| columns.len())
+            .unwrap_or(0);
+        let last_column = columns.iter().copied().max().unwrap_or(0);
+        let overlap = columns
+            .iter()
+            .filter(|column| next_columns.contains(column))
+            .count();
+        let mut score = (non_empty as i32) * 10 + (row_string_count(row) as i32) * 3;
+
+        if next_columns.len() >= 2 {
+            score += 25;
+            score += overlap.min(non_empty) as i32 * 2;
+        }
+
+        if previous_non_empty <= 1 {
+            score += 6;
+        }
+
+        if next_columns.len().abs_diff(non_empty) <= 2 {
+            score += 8;
+        }
+
+        if score >= 30
+            && best
+                .map(|(best_score, _, _)| score > best_score)
+                .unwrap_or(true)
+        {
+            best = Some((score, row.row_number, last_column + 1));
+        }
+    }
+
+    if let Some((_, header_row, column_count)) = best {
+        return Ok(HeaderDetection {
+            header_row,
+            column_count,
+            rows_scanned: rows.len(),
+            fallback_used: false,
+        });
+    }
+
+    for (index, row) in rows.iter().enumerate() {
+        let columns = significant_columns(row);
+
+        if columns.len() != 1 {
+            continue;
+        }
+
+        let current_value = row
+            .cells
+            .get(&columns[0])
+            .map(|value| value.as_str())
+            .unwrap_or_default();
+        let next_single = rows.get(index + 1).and_then(|next_row| {
+            let next_columns = significant_columns(next_row);
+            if next_columns.len() == 1 {
+                next_row.cells.get(&next_columns[0])
+            } else {
+                None
+            }
+        });
+        let row_after_next_is_single = rows
+            .get(index + 2)
+            .map(significant_columns)
+            .map(|columns| columns.len() == 1)
+            .unwrap_or(false);
+
+        if current_value
+            .chars()
+            .any(|character| character.is_alphabetic())
+            && next_single
+                .map(|value| value.chars().any(|character| character.is_alphabetic()))
+                .unwrap_or(false)
+            && row_after_next_is_single
+        {
+            continue;
+        }
+
+        let following_single_rows = rows
+            .iter()
+            .skip(index + 1)
+            .take(3)
+            .filter(|next_row| significant_columns(next_row).len() == 1)
+            .count();
+
+        if following_single_rows >= 2 || (index == 0 && following_single_rows >= 1) {
+            return Ok(HeaderDetection {
+                header_row: row.row_number,
+                column_count: columns[0] + 1,
+                rows_scanned: rows.len(),
+                fallback_used: true,
+            });
+        }
+    }
+
+    Err("Nao foi possivel identificar com seguranca o cabecalho desta planilha.".to_string())
+}
+
+fn detect_excel_header(file_path: &PathBuf, sheet_name: &str) -> Result<HeaderDetection, String> {
+    let rows = scan_sheet_header_rows(file_path, sheet_name)?;
+    let detection = detect_header_from_rows(&rows)?;
+
+    eprintln!(
+        "EXCEL_HEADER_DETECTION\nsheet_name: {sheet_name}\nrows_scanned: {}\ndetected_header_row: {}\ndetected_column_count: {}\nfallback_used: {}",
+        detection.rows_scanned,
+        detection.header_row,
+        detection.column_count,
+        detection.fallback_used
+    );
+
+    Ok(detection)
+}
+
+fn xlsx_range_for_detection(detection: &HeaderDetection) -> Result<String, String> {
+    if detection.column_count == 0 {
+        return Err("A linha de cabecalho detectada nao possui colunas.".to_string());
+    }
+
+    let end_column = xlsx_column_name(detection.column_count - 1);
+    Ok(format!("A{}:{end_column}", detection.header_row))
+}
+
+fn inspect_excel_workbook_blocking(path: String) -> Result<ExcelWorkbookInspection, String> {
+    let start = Instant::now();
+    let file_path = PathBuf::from(&path);
+    let extension = file_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if !matches!(extension.as_str(), "xlsx" | "xlsm") {
+        return Err("A inspecao de abas aceita apenas arquivos .xlsx ou .xlsm.".to_string());
+    }
+
+    let file_name = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("arquivo.xlsx")
+        .to_string();
+    let sheets = inspect_excel_workbook_metadata(&file_path)?;
+
+    Ok(ExcelWorkbookInspection {
+        file_name,
+        sheets,
+        inspection_duration_ms: start.elapsed().as_millis(),
+    })
+}
+
+#[tauri::command]
+async fn inspect_excel_workbook(path: String) -> Result<ExcelWorkbookInspection, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_excel_workbook_blocking(path))
+        .await
+        .map_err(|error| format!("A inspecao do workbook foi interrompida: {error}"))?
 }
 
 fn cell_to_string(value: &DataRef<'_>) -> String {
@@ -1215,7 +1920,7 @@ fn register_document(
     connection: &Connection,
     document_id: &str,
     workspace_id: &str,
-    file_name: &str,
+    document_name: &str,
     sheet_name: &str,
     table_name: &str,
     row_count: usize,
@@ -1223,6 +1928,9 @@ fn register_document(
     imported_at: &str,
     import_duration_ms: Option<u128>,
     import_performance_json: Option<&str>,
+    source_type: &str,
+    source_file_name: &str,
+    source_sheet_name: Option<&str>,
 ) -> Result<(), String> {
     connection
         .execute(
@@ -1237,21 +1945,27 @@ fn register_document(
                     column_count,
                     imported_at,
                     import_duration_ms,
-                    import_performance_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    import_performance_json,
+                    source_type,
+                    source_file_name,
+                    source_sheet_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 quoted_identifier(DOCUMENTS_TABLE)
             ),
             params![
                 document_id,
                 workspace_id,
-                file_name,
+                document_name,
                 sheet_name,
                 table_name,
                 row_count as i64,
                 column_count as i64,
                 imported_at,
                 import_duration_ms.map(|duration| duration as i64),
-                import_performance_json
+                import_performance_json,
+                source_type,
+                source_file_name,
+                source_sheet_name
             ],
         )
         .map_err(|error| format!("Nao foi possivel registrar o documento: {error}"))?;
@@ -2431,6 +3145,8 @@ fn import_xlsx_blocking(
     app: AppHandle,
     path: String,
     workspace_id: String,
+    selected_sheet_name: Option<String>,
+    workbook_inspection_ms: Option<u128>,
 ) -> Result<ImportSummary, String> {
     let total_start = Instant::now();
     let mut performance = ImportPerformance::default();
@@ -2462,18 +3178,43 @@ fn import_xlsx_blocking(
         let document_id = new_document_id()?;
         let table_name = format!("xlsx_rows_{document_id}");
         let imported_at = now_millis()?.to_string();
-        let sheet_name = first_xlsx_sheet_name_from_workbook_xml(&file_path)
-            .unwrap_or_else(|| "Primeira planilha".to_string());
+        let sheet_name = match selected_sheet_name.as_deref() {
+            Some(name) if !name.trim().is_empty() => name.to_string(),
+            _ => {
+                let inspection_start = Instant::now();
+                let detected = first_xlsx_sheet_name_from_workbook_xml(&file_path)
+                    .unwrap_or_else(|| "Primeira planilha".to_string());
+                performance.excel_workbook_inspection += inspection_start.elapsed();
+                detected
+            }
+        };
+        if let Some(duration) = workbook_inspection_ms {
+            performance.excel_workbook_inspection += Duration::from_millis(duration as u64);
+        }
         performance.data_preparation += preparation_start.elapsed();
+
+        let header_detection_start = Instant::now();
+        let header_detection = detect_excel_header(&file_path, &sheet_name)?;
+        let range = xlsx_range_for_detection(&header_detection)?;
+        let header_detection_elapsed = header_detection_start.elapsed();
+        performance.excel_header_detection += header_detection_elapsed;
+        performance.data_preparation += header_detection_elapsed;
 
         let connection = open_database(&app)?;
         ensure_workspace_exists(&connection, &workspace_id)?;
 
         let duckdb_xlsx_start = Instant::now();
-        try_import_xlsx_direct_without_preopen(&connection, &file_path, &table_name)?;
+        try_import_xlsx_direct_without_preopen(
+            &connection,
+            &file_path,
+            &table_name,
+            Some(&sheet_name),
+            Some(&range),
+        )?;
         let duckdb_xlsx = duckdb_xlsx_start.elapsed();
         performance.duckdb += duckdb_xlsx;
         performance.duckdb_detail.xlsx_import += duckdb_xlsx;
+        performance.excel_sheet_import += duckdb_xlsx;
 
         let auxiliary_start = Instant::now();
         let row_count = connection
@@ -2500,7 +3241,7 @@ fn import_xlsx_blocking(
             &connection,
             &document_id,
             &workspace_id,
-            &file_name,
+            &sheet_name,
             &sheet_name,
             &table_name,
             row_count,
@@ -2508,6 +3249,9 @@ fn import_xlsx_blocking(
             &imported_at,
             Some(import_duration_ms),
             None,
+            "xlsx",
+            &file_name,
+            Some(&sheet_name),
         )?;
         let auxiliary_elapsed = auxiliary_start.elapsed();
         performance.auxiliary_structures += auxiliary_elapsed;
@@ -2529,7 +3273,7 @@ fn import_xlsx_blocking(
 
         return Ok(ImportSummary {
             document_id,
-            file_name,
+            file_name: sheet_name.clone(),
             sheet_name,
             columns,
             row_count,
@@ -2551,8 +3295,14 @@ fn import_xlsx_blocking(
     let worksheets_start = Instant::now();
     let sheet_name = workbook
         .sheet_names()
-        .first()
-        .cloned()
+        .into_iter()
+        .find(|name| {
+            selected_sheet_name
+                .as_deref()
+                .map(|selected| selected == name)
+                .unwrap_or(false)
+        })
+        .or_else(|| workbook.sheet_names().first().cloned())
         .ok_or_else(|| "O arquivo nao possui planilhas.".to_string())?;
 
     let mut reader = workbook
@@ -2805,7 +3555,7 @@ fn import_xlsx_blocking(
             &connection,
             &document_id,
             &workspace_id,
-            &file_name,
+            &sheet_name,
             &sheet_name,
             &table_name,
             row_count,
@@ -2813,6 +3563,9 @@ fn import_xlsx_blocking(
             &imported_at,
             Some(import_duration_ms),
             None,
+            "xlsx",
+            &file_name,
+            Some(&sheet_name),
         )?;
         let auxiliary_elapsed = auxiliary_start.elapsed();
         performance.auxiliary_structures += auxiliary_elapsed;
@@ -2849,7 +3602,7 @@ fn import_xlsx_blocking(
 
         return Ok(ImportSummary {
             document_id,
-            file_name,
+            file_name: sheet_name.clone(),
             sheet_name,
             columns,
             row_count,
@@ -2893,7 +3646,7 @@ fn import_xlsx_blocking(
                         &connection,
                         &document_id,
                         &workspace_id,
-                        &file_name,
+                        &sheet_name,
                         &sheet_name,
                         &table_name,
                         row_count,
@@ -2901,6 +3654,9 @@ fn import_xlsx_blocking(
                         &imported_at,
                         Some(import_duration_ms),
                         None,
+                        "xlsx",
+                        &file_name,
+                        Some(&sheet_name),
                     )?;
                     let auxiliary_elapsed = auxiliary_start.elapsed();
                     performance.auxiliary_structures += auxiliary_elapsed;
@@ -2929,7 +3685,7 @@ fn import_xlsx_blocking(
 
                     return Ok(ImportSummary {
                         document_id,
-                        file_name,
+                        file_name: sheet_name.clone(),
                         sheet_name,
                         columns,
                         row_count,
@@ -3049,7 +3805,7 @@ fn import_xlsx_blocking(
             &connection,
             &document_id,
             &workspace_id,
-            &file_name,
+            &sheet_name,
             &sheet_name,
             &table_name,
             row_count,
@@ -3057,6 +3813,9 @@ fn import_xlsx_blocking(
             &imported_at,
             Some(import_duration_ms),
             None,
+            "xlsx",
+            &file_name,
+            Some(&sheet_name),
         )?;
         let auxiliary_elapsed = auxiliary_start.elapsed();
         performance.auxiliary_structures += auxiliary_elapsed;
@@ -3079,7 +3838,7 @@ fn import_xlsx_blocking(
 
         return Ok(ImportSummary {
             document_id,
-            file_name,
+            file_name: sheet_name.clone(),
             sheet_name,
             columns,
             row_count,
@@ -3282,7 +4041,7 @@ fn import_xlsx_blocking(
         &connection,
         &document_id,
         &workspace_id,
-        &file_name,
+        &sheet_name,
         &sheet_name,
         &table_name,
         row_count,
@@ -3290,6 +4049,9 @@ fn import_xlsx_blocking(
         &imported_at,
         Some(import_duration_ms),
         None,
+        "xlsx",
+        &file_name,
+        Some(&sheet_name),
     )?;
     let auxiliary_elapsed = auxiliary_start.elapsed();
     performance.auxiliary_structures += auxiliary_elapsed;
@@ -3311,7 +4073,7 @@ fn import_xlsx_blocking(
 
     Ok(ImportSummary {
         document_id,
-        file_name,
+        file_name: sheet_name.clone(),
         sheet_name,
         columns,
         row_count,
@@ -3414,6 +4176,9 @@ fn import_csv_blocking(
         &imported_at,
         Some(import_duration_ms),
         None,
+        "csv",
+        &file_name,
+        None,
     )?;
 
     Ok(ImportSummary {
@@ -3432,6 +4197,8 @@ fn import_document_blocking(
     app: AppHandle,
     path: String,
     workspace_id: Option<String>,
+    sheet_name: Option<String>,
+    workbook_inspection_ms: Option<u128>,
 ) -> Result<ImportSummary, String> {
     let workspace_id = workspace_or_default(workspace_id);
     let file_path = PathBuf::from(&path);
@@ -3443,7 +4210,9 @@ fn import_document_blocking(
 
     match extension.as_str() {
         "csv" => import_csv_blocking(app, path, workspace_id),
-        "xlsx" | "xlsm" => import_xlsx_blocking(app, path, workspace_id),
+        "xlsx" | "xlsm" => {
+            import_xlsx_blocking(app, path, workspace_id, sheet_name, workbook_inspection_ms)
+        }
         _ => Err("Use arquivos .xlsx, .xlsm ou .csv.".to_string()),
     }
 }
@@ -3453,10 +4222,14 @@ async fn import_document(
     app: AppHandle,
     path: String,
     workspace_id: Option<String>,
+    sheet_name: Option<String>,
+    workbook_inspection_ms: Option<u128>,
 ) -> Result<ImportSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || import_document_blocking(app, path, workspace_id))
-        .await
-        .map_err(|error| format!("A importacao foi interrompida: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        import_document_blocking(app, path, workspace_id, sheet_name, workbook_inspection_ms)
+    })
+    .await
+    .map_err(|error| format!("A importacao foi interrompida: {error}"))?
 }
 
 #[tauri::command]
@@ -4353,6 +5126,7 @@ pub fn run() {
             list_workspaces,
             create_workspace,
             update_workspace,
+            inspect_excel_workbook,
             import_document,
             get_column_profile,
             list_quality_rules,
@@ -4518,6 +5292,314 @@ mod tests {
 
         assert_eq!(rows, 2);
         assert_eq!(code, "001234");
+    }
+
+    fn test_sheet_xml(header: &str, value: &str) -> String {
+        let mut sheet = String::from(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>"#,
+        );
+        sheet.push_str(r#"<row r="1">"#);
+        write_xlsx_text_cell(&mut sheet, 1, 0, header);
+        sheet.push_str("</row>");
+        sheet.push_str(r#"<row r="2">"#);
+        write_xlsx_text_cell(&mut sheet, 2, 0, value);
+        sheet.push_str("</row>");
+        sheet.push_str("</sheetData></worksheet>");
+        sheet
+    }
+
+    fn test_sheet_xml_from_rows(rows: &[Vec<&str>], merged_title_width: Option<usize>) -> String {
+        let mut sheet = String::from(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>"#,
+        );
+
+        for (row_index, row) in rows.iter().enumerate() {
+            let row_number = row_index + 1;
+            sheet.push_str(&format!(r#"<row r="{row_number}">"#));
+
+            for (column_index, value) in row.iter().enumerate() {
+                if !value.is_empty() {
+                    write_xlsx_text_cell(&mut sheet, row_number, column_index, value);
+                }
+            }
+
+            sheet.push_str("</row>");
+        }
+
+        sheet.push_str("</sheetData>");
+
+        if let Some(width) = merged_title_width {
+            let end_column = xlsx_column_name(width.saturating_sub(1));
+            sheet.push_str(&format!(
+                r#"<mergeCells count="1"><mergeCell ref="A1:{end_column}1"/></mergeCells>"#
+            ));
+        }
+
+        sheet.push_str("</worksheet>");
+        sheet
+    }
+
+    fn write_test_single_sheet_xlsx(path: &PathBuf, sheet_name: &str, sheet_xml: &str) {
+        let file = fs::File::create(path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "[Content_Types].xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "_rels/.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "xl/workbook.xml",
+            &format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="{}" sheetId="1" r:id="rId1"/></sheets></workbook>"#, xml_escape(sheet_name)),
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "xl/_rels/workbook.xml.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(&mut zip, options, "xl/worksheets/sheet1.xml", sheet_xml).unwrap();
+        zip.finish().unwrap();
+    }
+
+    fn write_test_multisheet_xlsx(path: &PathBuf) {
+        let file = fs::File::create(path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "[Content_Types].xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "_rels/.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "xl/workbook.xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Primeira" sheetId="1" r:id="rId1"/><sheet name="O'Brien" sheetId="2" state="hidden" r:id="rId2"/></sheets></workbook>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "xl/_rels/workbook.xml.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>"#,
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "xl/worksheets/sheet1.xml",
+            &test_sheet_xml("codigo", "primeira"),
+        )
+        .unwrap();
+        write_xlsx_zip_entry(
+            &mut zip,
+            options,
+            "xl/worksheets/sheet2.xml",
+            &test_sheet_xml("codigo", "segunda"),
+        )
+        .unwrap();
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn xlsx_direct_imports_selected_sheet_without_cell_preopen() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "valtron_multisheet_test_{}.xlsx",
+            now_millis().unwrap()
+        ));
+        write_test_multisheet_xlsx(&path);
+
+        let sheets = inspect_excel_workbook_metadata(&path).unwrap();
+        assert_eq!(sheets.len(), 2);
+        assert_eq!(sheets[1].name, "O'Brien");
+        assert_eq!(sheets[1].visibility, "hidden");
+
+        let connection = Connection::open_in_memory().unwrap();
+        try_import_xlsx_direct_without_preopen(
+            &connection,
+            &path,
+            "selected_sheet_test",
+            Some("O'Brien"),
+            None,
+        )
+        .unwrap();
+
+        let rows = connection
+            .query_row("SELECT COUNT(*) FROM selected_sheet_test", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        let value = connection
+            .query_row("SELECT codigo FROM selected_sheet_test", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap();
+
+        assert_eq!(rows, 1);
+        assert_eq!(value, "segunda");
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn detects_header_after_merged_title_and_limits_width() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "valtron_header_title_test_{}.xlsx",
+            now_millis().unwrap()
+        ));
+        let sheet = test_sheet_xml_from_rows(
+            &[
+                vec!["TABELA DE PARCELADOS"],
+                vec![
+                    "QTO",
+                    "MUNICIPIO",
+                    "N SEI",
+                    "PROGRAMA",
+                    "VALOR",
+                    "PARCELAS",
+                    "TOTAL PARCELADO",
+                    "",
+                    "",
+                ],
+                vec!["1", "Alcobaca", "001", "PETE", "10", "2", "20"],
+            ],
+            Some(7),
+        );
+        write_test_single_sheet_xlsx(&path, "PAGAMENTO PARCELADOS (2)", &sheet);
+
+        let detection = detect_excel_header(&path, "PAGAMENTO PARCELADOS (2)").unwrap();
+        assert_eq!(detection.header_row, 2);
+        assert_eq!(detection.column_count, 7);
+
+        let connection = Connection::open_in_memory().unwrap();
+        let range = xlsx_range_for_detection(&detection).unwrap();
+        try_import_xlsx_direct_without_preopen(
+            &connection,
+            &path,
+            "header_title_test",
+            Some("PAGAMENTO PARCELADOS (2)"),
+            Some(&range),
+        )
+        .unwrap();
+        let columns = get_columns(&connection, "header_title_test").unwrap();
+        let rows = connection
+            .query_row("SELECT COUNT(*) FROM header_title_test", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+
+        assert_eq!(columns.len(), 7);
+        assert_eq!(rows, 1);
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn detects_header_after_empty_rows_and_preserves_leading_zeroes() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "valtron_header_empty_test_{}.xlsx",
+            now_millis().unwrap()
+        ));
+        let sheet = test_sheet_xml_from_rows(
+            &[
+                vec![],
+                vec![],
+                vec![],
+                vec!["TABELA DE PARCELADOS"],
+                vec![
+                    "QTO",
+                    "MUNICIPIO",
+                    "N SEI",
+                    "PROGRAMA",
+                    "VALOR DO MONTANTE",
+                    "PARCELAS PAGAS ATE O PRESENTE",
+                    "PARCELAS INTEGRAIS",
+                    "TOTAL PARCELADO",
+                    "",
+                ],
+                vec!["001", "Araci", "SEI-1", "PETE", "10", "1", "2", "20"],
+                vec!["010", "Bahia", "SEI-2", "PETE", "30", "3", "4", "40"],
+            ],
+            None,
+        );
+        write_test_single_sheet_xlsx(&path, "PARCELAS", &sheet);
+
+        let detection = detect_excel_header(&path, "PARCELAS").unwrap();
+        assert_eq!(detection.header_row, 5);
+        assert_eq!(detection.column_count, 8);
+
+        let connection = Connection::open_in_memory().unwrap();
+        let range = xlsx_range_for_detection(&detection).unwrap();
+        try_import_xlsx_direct_without_preopen(
+            &connection,
+            &path,
+            "header_empty_test",
+            Some("PARCELAS"),
+            Some(&range),
+        )
+        .unwrap();
+        let columns = get_columns(&connection, "header_empty_test").unwrap();
+        let first_code = connection
+            .query_row("SELECT QTO FROM header_empty_test LIMIT 1", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap();
+
+        assert_eq!(columns.len(), 8);
+        assert_eq!(first_code, "001");
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn detects_single_column_table_after_title() {
+        let rows = vec![
+            HeaderScanRow {
+                row_number: 1,
+                cells: HashMap::from([(0, "RELATORIO DE CODIGOS".to_string())]),
+            },
+            HeaderScanRow {
+                row_number: 2,
+                cells: HashMap::from([(0, "codigo".to_string())]),
+            },
+            HeaderScanRow {
+                row_number: 3,
+                cells: HashMap::from([(0, "001".to_string())]),
+            },
+            HeaderScanRow {
+                row_number: 4,
+                cells: HashMap::from([(0, "002".to_string())]),
+            },
+        ];
+
+        let detection = detect_header_from_rows(&rows).unwrap();
+        assert_eq!(detection.header_row, 2);
+        assert_eq!(detection.column_count, 1);
     }
 
     #[test]
