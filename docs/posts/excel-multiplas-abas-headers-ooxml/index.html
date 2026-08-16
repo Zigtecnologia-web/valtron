@@ -3,19 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DuckDB dentro de uma aplicação desktop | Valtron</title>
-    <meta name="description" content="Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados." />
-    <link rel="canonical" href="https://zigtecnologia-web.github.io/valtron/posts/duckdb-desktop/" />
+    <title>Quando o Excel não segue o padrão: múltiplas abas, headers deslocados e OOXML | Valtron</title>
+    <meta name="description" content="Múltiplas abas, headers deslocados, namespaces OOXML e a decisão de inspecionar pouco para manter o DuckDB como caminho pesado de importação." />
+    <link rel="canonical" href="https://zigtecnologia-web.github.io/valtron/posts/excel-multiplas-abas-headers-ooxml/" />
     <meta property="og:type" content="article" />
     <meta property="og:locale" content="pt_BR" />
     <meta property="og:site_name" content="Valtron" />
-    <meta property="og:title" content="DuckDB dentro de uma aplicação desktop" />
-    <meta property="og:description" content="Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados." />
-    <meta property="og:url" content="https://zigtecnologia-web.github.io/valtron/posts/duckdb-desktop/" />
+    <meta property="og:title" content="Quando o Excel não segue o padrão: múltiplas abas, headers deslocados e OOXML" />
+    <meta property="og:description" content="Múltiplas abas, headers deslocados, namespaces OOXML e a decisão de inspecionar pouco para manter o DuckDB como caminho pesado de importação." />
+    <meta property="og:url" content="https://zigtecnologia-web.github.io/valtron/posts/excel-multiplas-abas-headers-ooxml/" />
     <meta property="og:image" content="https://zigtecnologia-web.github.io/valtron/images/valtron-interface-workspace.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="DuckDB dentro de uma aplicação desktop" />
-    <meta name="twitter:description" content="Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados." />
+    <meta name="twitter:title" content="Quando o Excel não segue o padrão: múltiplas abas, headers deslocados e OOXML" />
+    <meta name="twitter:description" content="Múltiplas abas, headers deslocados, namespaces OOXML e a decisão de inspecionar pouco para manter o DuckDB como caminho pesado de importação." />
     <meta name="twitter:image" content="https://zigtecnologia-web.github.io/valtron/images/valtron-interface-workspace.png" />
     <style>
       :root {
@@ -743,385 +743,273 @@
       <section id="blog" class="sales-band">
         <div class="shell">
           <div class="section-heading">
-            <p class="eyebrow">Arquitetura</p>
-            <h1>DuckDB dentro de uma aplicação desktop</h1>
-            <p>Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados.</p>
+            <p class="eyebrow">Importação Excel</p>
+            <h1>Quando o Excel não segue o padrão: múltiplas abas, headers deslocados e OOXML</h1>
+            <p>Múltiplas abas, headers deslocados, namespaces OOXML e a decisão de inspecionar pouco para manter o DuckDB como caminho pesado de importação.</p>
           </div>
 
           <div class="blog-layout">
             <div class="post-feed">
-              <article id="post-duckdb-desktop" class="post-card post-prose">
+              <article id="post-excel-multiplas-abas-headers-ooxml" class="post-card post-prose">
                 <div class="post-meta">
-                  <span>Arquitetura</span>
-                  <span>15 ago 2026</span>
+                  <span>Importação Excel</span>
+                  <span>16 ago 2026</span>
                 </div>
                 <a class="post-permalink" href="./">Link desta postagem</a>
-                <h3>DuckDB dentro de uma aplicação desktop: por que escolhi esse caminho no Valtron</h3>
+                <h3>Quando o Excel não segue o padrão: múltiplas abas, headers deslocados e OOXML</h3>
                 <p>
-                  Quando comecei o Valtron, uma das decisões mais importantes
-                  foi escolher onde os dados ficariam depois da importação.
+                  Nas últimas evoluções do Valtron, comecei a trabalhar em um
+                  problema que parece simples até aparecer um arquivo real:
+                  <strong>importar Excel com várias abas sem perder performance
+                  nem interpretar a estrutura de forma errada</strong>.
                 </p>
-                <p>Eu poderia carregar o arquivo e manter tudo em memória.</p>
-                <p>Poderia converter os dados para alguma estrutura própria.</p>
-                <p>
-                  Poderia até exigir que o usuário tivesse PostgreSQL ou outro
-                  banco instalado.
-                </p>
-                <p>Acabei seguindo outro caminho:</p>
-                <blockquote>usar o DuckDB como banco de dados embutido na própria aplicação.</blockquote>
-                <p>Isso resolveu mais problemas do que apenas onde armazenar os dados.</p>
+                <p>Até então, o fluxo estava muito focado em arquivos tabulares mais previsíveis.</p>
+                <p>Só que Excel do mundo real costuma ser diferente.</p>
 
-                <h4>O que eu precisava</h4>
-                <p>
-                  O Valtron trabalha com arquivos que podem ter centenas de
-                  milhares de registros.
-                </p>
-                <p>
-                  Depois de importar um XLSX ou CSV, eu precisava conseguir
-                  fazer coisas como:
-                </p>
-                <pre><code>SELECT COUNT(*)
-FROM documento;</code></pre>
-                <p>Filtrar:</p>
-                <pre><code>SELECT *
-FROM documento
-WHERE cidade = 'Salvador';</code></pre>
-                <p>Ordenar:</p>
-                <pre><code>SELECT *
-FROM documento
-ORDER BY nome;</code></pre>
-                <p>Agrupar:</p>
-                <pre><code>SELECT cidade, COUNT(*)
-FROM documento
-GROUP BY cidade;</code></pre>
-                <p>
-                  E, mais recentemente, executar operações de profiling e
-                  qualidade dos dados.
-                </p>
-                <p>
-                  Ou seja, depois da importação, boa parte do problema já se
-                  parecia muito com um problema de banco de dados.
-                </p>
-                <p>Então comecei a me perguntar:</p>
-                <blockquote>Por que construir manualmente algo que um banco já sabe fazer?</blockquote>
+                <h4>Um workbook pode ser várias fontes de dados</h4>
+                <p>Um único <code>.xlsx</code> pode ter:</p>
+                <pre><code>financeiro.xlsx
 
-                <h4>Mas eu não queria um servidor de banco</h4>
-                <p>Usar PostgreSQL resolveria boa parte dessas necessidades.</p>
-                <p>Só que criaria outras.</p>
-                <p>
-                  Para usar o Valtron, seria necessário ter um servidor
-                  disponível, configurar conexão, usuário, senha, banco, porta e
-                  pensar no ciclo de vida desses dados.
-                </p>
-                <p>Para uma aplicação desktop, eu queria algo mais próximo disso:</p>
-                <pre><code>abre o Valtron
-      ↓
-importa o arquivo
-      ↓
-trabalha com os dados</code></pre>
-                <p>Sem uma etapa:</p>
-                <pre><code>configure seu servidor de banco</code></pre>
-                <p>É aí que o DuckDB encaixou muito bem.</p>
+├── Clientes
+├── Vendas
+├── Parcelas
+├── Pagamentos
+└── Resumo</code></pre>
+                <p>Cada aba pode representar um conjunto de dados diferente.</p>
+                <p>Por isso, o Valtron passou a identificar as sheets do workbook e permitir escolher:</p>
+                <pre><code>☑ Clientes
+☑ Vendas
+☐ Parcelas
+☑ Pagamentos
 
-                <h4>DuckDB não precisa de um servidor</h4>
-                <p>O DuckDB é um banco de dados embutido.</p>
-                <p>No Valtron, ele roda dentro da própria aplicação.</p>
-                <p>A arquitetura ficou aproximadamente assim:</p>
-                <pre><code>┌─────────────────────────┐
-│        Valtron          │
-│                         │
-│      TypeScript         │
-│          ↓              │
-│        Tauri            │
-│          ↓              │
-│         Rust            │
-│          ↓              │
-│        DuckDB           │
-│          ↓              │
-│     dados locais        │
-└─────────────────────────┘</code></pre>
-                <p>O frontend não abre uma conexão com um servidor externo.</p>
-                <p>
-                  Ele chama comandos Tauri, o backend Rust executa as operações
-                  e o DuckDB faz boa parte do trabalho relacionado aos dados.
-                </p>
-
-                <h4>O arquivo deixa de ser a estrutura de trabalho</h4>
-                <p>Essa foi uma mudança importante no projeto.</p>
-                <p>
-                  Depois que um XLSX é importado, eu não quero continuar abrindo
-                  e percorrendo aquela planilha toda vez que o usuário fizer
-                  alguma coisa.
-                </p>
-                <p>O fluxo é:</p>
-                <pre><code>arquivo.xlsx
-     ↓
-  importação
-     ↓
-   DuckDB
-     ↓
- consultas</code></pre>
-                <p>
-                  Cada documento importado recebe uma tabela física própria
-                  dentro do banco local.
-                </p>
-                <p>A partir daí, a fonte de trabalho passa a ser o DuckDB.</p>
-                <p>Isso significa que fazer um filtro não exige abrir novamente o XLSX.</p>
-                <p>Ordenar também não.</p>
-                <p>Executar SQL também não.</p>
-                <p>Fazer profiling também não.</p>
-                <p>O arquivo é a entrada. O banco passa a ser o ambiente de trabalho.</p>
-
-                <h4>Isso ficou ainda mais interessante com a grid virtualizada</h4>
-                <p>
-                  No post anterior falei sobre como a interface do Valtron não
-                  carrega centenas de milhares de linhas de uma vez.
-                </p>
-                <p>Ela pede pequenas janelas.</p>
-                <p>É justamente o DuckDB que consegue responder essas solicitações.</p>
-                <p>Algo conceitualmente parecido com:</p>
-                <pre><code>SELECT nome, cpf, cidade
-FROM documento
-WHERE cidade = 'Salvador'
-ORDER BY nome
-LIMIT 100
-OFFSET 1200;</code></pre>
-                <p>
-                  O frontend não precisa receber o dataset inteiro para
-                  descobrir quais são as linhas 1200 até 1299.
-                </p>
-                <p>O banco faz isso.</p>
-                <p>A interface recebe apenas o resultado necessário naquele momento.</p>
-                <p>Isso criou uma separação que considero importante no Valtron:</p>
-                <pre><code>DuckDB
-sabe trabalhar com o dataset
-
-       ↓
-
-Rust
-coordena as operações
-
-       ↓
-
-Frontend
-sabe apresentar o resultado</code></pre>
-
-                <h4>SQL veio praticamente de graça</h4>
-                <p>
-                  Quando os documentos passaram a existir como tabelas no
-                  DuckDB, apareceu outra possibilidade.
-                </p>
-                <p>
-                  Se já existe um banco SQL por trás do Valtron, por que não
-                  permitir que o usuário consulte os documentos diretamente?
-                </p>
-                <p>Foi assim que entrou o console SQL.</p>
-                <p>
-                  Hoje é possível executar consultas <code>SELECT</code> e CTEs
-                  sobre os documentos importados. O console é somente leitura,
-                  justamente para evitar que uma consulta digitada manualmente
-                  altere silenciosamente os dados.
-                </p>
+3 planilhas selecionadas</code></pre>
+                <p>Também passou a fazer sentido permitir que essas abas sejam organizadas juntas.</p>
+                <p>Se várias sheets vieram do mesmo arquivo, o usuário pode escolher:</p>
+                <pre><code>Workspace atual
+Outro workspace
+Criar novo workspace</code></pre>
                 <p>Por exemplo:</p>
-                <pre><code>SELECT
-    cidade,
-    COUNT(*) AS quantidade
-FROM documento
-GROUP BY cidade
-ORDER BY quantidade DESC;</code></pre>
-                <p>Isso adicionou uma característica que eu gosto bastante no projeto.</p>
-                <p>Quem não conhece SQL pode usar a interface.</p>
-                <p>Quem conhece SQL pode ir além dela.</p>
-                <p>Os dois trabalham sobre o mesmo conjunto de dados.</p>
+                <pre><code>financeiro.xlsx
+      ↓
+Clientes
+Vendas
+Pagamentos
+      ↓
+Workspace: Financeiro 2026</code></pre>
+                <p>Mas existe uma separação importante:</p>
+                <blockquote>o workbook é a origem. O workspace é organização.</blockquote>
+                <p>O Valtron não deve assumir automaticamente que todo Excel precisa virar um workspace.</p>
 
-                <h4>Depois veio o Data Profiling</h4>
-                <p>
-                  Quando comecei a implementar análise de colunas, a escolha
-                  pelo DuckDB fez ainda mais sentido.
-                </p>
-                <p>Imagine que eu queira saber sobre uma coluna <code>NOTA</code>:</p>
-                <pre><code>quantos valores existem?
-quantos estão vazios?
-quantos são distintos?
-qual o menor valor?
-qual o maior?
-qual a média?
-como os valores estão distribuídos?</code></pre>
-                <p>Eu poderia buscar 600 mil valores para o Rust e calcular tudo.</p>
-                <p>Mas seria estranho fazer isso tendo um motor analítico logo abaixo.</p>
-                <p>É muito mais interessante executar operações próximas dos dados:</p>
-                <pre><code>604.270 registros
-       ↓
-    DuckDB
-       ↓
-COUNT
-DISTINCT
-MIN
-MAX
-AVG
-GROUP BY
-       ↓
-resultado pequeno
-       ↓
-interface</code></pre>
-                <p>
-                  Em vez de transportar centenas de milhares de valores,
-                  transporto o resultado da análise.
-                </p>
+                <h4>O problema não terminou nas abas</h4>
+                <p>Depois disso apareceu um caso mais interessante.</p>
+                <p>Algumas planilhas tinham estruturas assim:</p>
+                <pre><code>TABELA DE PARCELADOS
 
-                <h4>O mesmo vale para Data Quality</h4>
-                <p>Considere uma regra:</p>
-                <blockquote>A nota deve estar entre 0 e 10.</blockquote>
-                <p>O frontend não precisa receber todas as notas e executar:</p>
-                <pre><code>if (nota &lt; 0 || nota &gt; 10) {
-    // inválido
-}</code></pre>
-                <p>A ideia é deixar o banco encontrar essas linhas.</p>
-                <p>O mesmo princípio pode ser usado para:</p>
-                <pre><code>valores vazios
-duplicidades
-intervalos numéricos
-comprimento
-valores permitidos
-datas inválidas</code></pre>
-                <p>
-                  O Valtron fica responsável por transformar essas operações em
-                  uma experiência visual.
-                </p>
-                <p>O DuckDB continua fazendo o trabalho pesado.</p>
+QTO | MUNICÍPIO | Nº SEI | PROGRAMA | VALOR | PARCELAS
+1   | Salvador  | ...    | ...      | ...   | ...</code></pre>
+                <p>Para uma pessoa, está claro que:</p>
+                <pre><code>TABELA DE PARCELADOS</code></pre>
+                <p>é apenas um título.</p>
+                <p>Mas um importador pode interpretar aquela primeira linha como cabeçalho.</p>
+                <p>Em outras abas, encontrei algo ainda diferente:</p>
+                <pre><code>linha vazia
+linha vazia
+linha vazia
+TABELA DE PARCELADOS
+QTO | MUNICÍPIO | Nº SEI | PROGRAMA | VALOR | ...
+dados...</code></pre>
+                <p>Nesse caso, o cabeçalho real estava na quinta linha.</p>
+                <p>Assumir:</p>
+                <pre><code>primeira linha = cabeçalho</code></pre>
+                <p>simplesmente não funciona para muitos arquivos produzidos para uso humano.</p>
 
-                <h4>E agora as transformações</h4>
+                <h4>Detectar o cabeçalho sem ler o arquivo inteiro</h4>
+                <p>Uma solução seria abrir toda a sheet em Rust e procurar onde a tabela começa.</p>
+                <p>Mas isso iria contra uma das principais decisões de arquitetura do Valtron.</p>
+                <p>Eu não quero:</p>
+                <pre><code>XLSX
+↓
+Rust lê 600 mil linhas
+↓
+Rust analisa tudo
+↓
+DuckDB lê 600 mil linhas novamente</code></pre>
+                <p>Então o fluxo ficou mais econômico:</p>
+                <pre><code>XLSX
+↓
+descobrir as sheets
+↓
+usuário seleciona
+↓
+inspecionar poucas linhas
+↓
+detectar header provável
+↓
+detectar largura da tabela
+↓
+DuckDB faz a leitura pesada</code></pre>
                 <p>
-                  Esse mesmo raciocínio está começando a aparecer na parte de
-                  preparação dos dados.
+                  Se uma sheet possui 1 milhão de registros, descobrir onde está
+                  o cabeçalho não deveria exigir analisar 1 milhão de linhas.
                 </p>
-                <p>Imagine 600 mil nomes:</p>
-                <pre><code>"  JOÃO SILVA  "
-"MARIA SANTOS "
-" PEDRO SOUZA"</code></pre>
-                <p>Quero remover espaços das extremidades.</p>
-                <p>Uma implementação ingênua poderia fazer:</p>
-                <pre><code>buscar 600 mil registros
-        ↓
-Rust
-        ↓
-loop
-        ↓
-alterar um por um
-        ↓
-DuckDB</code></pre>
-                <p>Mas o banco já sabe fazer:</p>
-                <pre><code>UPDATE documento
-SET nome = TRIM(nome);</code></pre>
-                <p>Essa diferença começa a definir bastante a arquitetura do Valtron.</p>
-                <p>Sempre que possível:</p>
-                <blockquote>levar a operação até os dados, e não os dados até a operação.</blockquote>
+                <p>A quantidade total do dataset não precisa determinar o custo dessa etapa.</p>
 
-                <h4>Local-first acabou virando uma característica do projeto</h4>
-                <p>
-                  Outra consequência dessa escolha é que o Valtron consegue
-                  trabalhar localmente.
-                </p>
-                <p>
-                  O usuário importa o arquivo e os dados permanecem no ambiente
-                  da aplicação.
-                </p>
-                <p>
-                  Não é necessário enviar 600 mil registros para uma API apenas
-                  para executar um filtro ou calcular uma distribuição.
-                </p>
-                <p>
-                  Isso é interessante tanto por simplicidade quanto para
-                  situações em que os dados não deveriam sair da máquina.
-                </p>
-                <p>Não significa que o Valtron nunca terá integrações externas.</p>
-                <p>
-                  PostgreSQL, Parquet, APIs ou outros destinos podem fazer
-                  sentido no futuro.
-                </p>
-                <p>
-                  Mas eles podem ser <strong>integrações</strong>, e não
-                  requisitos para a aplicação funcionar.
-                </p>
+                <h4>E então apareceu um bug ainda mais curioso</h4>
+                <p>Durante os testes, usei dois arquivos XLSX válidos.</p>
+                <p>Um deles funcionava normalmente.</p>
+                <p>O outro simplesmente não era reconhecido pelo Valtron.</p>
+                <p>Curiosamente, o DuckDB conseguia importar os dois sem problemas.</p>
+                <p>Isso ajudou a isolar a falha.</p>
+                <p>O problema estava antes do DuckDB.</p>
 
-                <h4>DuckDB não substitui PostgreSQL</h4>
-                <p>Essa distinção é importante.</p>
+                <h4>Nem todo OOXML é escrito da mesma forma</h4>
+                <p>Um XLSX é, na prática, um pacote ZIP contendo vários arquivos XML.</p>
+                <p>Um dos arquivos que funcionava possuía elementos assim:</p>
+                <pre><code>&lt;workbook&gt;
+&lt;sheet&gt;
+&lt;worksheet&gt;
+&lt;row&gt;
+&lt;c&gt;
+&lt;v&gt;</code></pre>
+                <p>O outro utilizava:</p>
+                <pre><code>&lt;x:workbook&gt;
+&lt;x:sheet&gt;
+&lt;x:worksheet&gt;
+&lt;x:row&gt;
+&lt;x:c&gt;
+&lt;x:v&gt;</code></pre>
+                <p>Semanticamente, os elementos são os mesmos.</p>
+                <p>A diferença é o <strong>prefixo de namespace XML</strong>.</p>
+                <p>Só que o parser auxiliar do Valtron estava procurando literalmente:</p>
+                <pre><code>sheet
+row
+c
+v</code></pre>
+                <p>Quando encontrava:</p>
+                <pre><code>x:sheet
+x:row
+x:c
+x:v</code></pre>
+                <p>não reconhecia.</p>
+                <p>O resultado era algo parecido com:</p>
+                <pre><code>O arquivo não possui planilhas.</code></pre>
+                <p>mesmo quando o arquivo tinha seis.</p>
+
+                <h4>A correção não foi adicionar <code>x:</code></h4>
+                <p>Seria fácil fazer:</p>
+                <pre><code>sheet OU x:sheet</code></pre>
+                <p>Mas isso resolveria apenas aquele arquivo.</p>
+                <p>Outro gerador de XLSX poderia produzir:</p>
+                <pre><code>&lt;main:sheet&gt;</code></pre>
+                <p>ou:</p>
+                <pre><code>&lt;ns1:sheet&gt;</code></pre>
+                <p>A solução correta foi trabalhar com o <strong>nome local do elemento</strong>.</p>
+                <p>Assim:</p>
+                <pre><code>sheet       → sheet
+x:sheet     → sheet
+main:sheet  → sheet
+ns1:sheet   → sheet</code></pre>
+                <p>O mesmo para:</p>
+                <pre><code>x:row → row
+x:c   → c
+x:v   → v</code></pre>
                 <p>
-                  Eu não escolheria DuckDB simplesmente porque ele é "melhor"
-                  que PostgreSQL.
-                </p>
-                <p>São problemas diferentes.</p>
-                <p>
-                  Se eu estivesse construindo um sistema transacional com vários
-                  usuários simultaneamente criando e atualizando registros,
-                  PostgreSQL provavelmente faria muito mais sentido.
-                </p>
-                <p>O cenário do Valtron é outro:</p>
-                <pre><code>arquivo grande
-     ↓
-processamento local
-     ↓
-consultas analíticas
-     ↓
-profiling
-     ↓
-qualidade
-     ↓
-transformações</code></pre>
-                <p>
-                  Nesse contexto, um banco analítico embutido combina muito bem
-                  com o problema.
-                </p>
-                <p>
-                  A escolha da tecnologia começa pelo tipo de trabalho que ela
-                  precisa executar.
+                  A ideia é interpretar o significado do elemento, e não depender
+                  da forma específica como o prefixo foi escrito.
                 </p>
 
-                <h4>O que mais gostei dessa arquitetura</h4>
+                <h4>Compatibilidade sem abandonar performance</h4>
+                <p>Esse tipo de correção é exatamente o que quero preservar no Valtron.</p>
                 <p>
-                  Talvez a parte mais interessante seja que o DuckDB não aparece
-                  para quem simplesmente quer abrir uma planilha.
+                  Seria possível resolver muitos casos criando um parser Excel
+                  cada vez mais completo dentro do backend Rust.
                 </p>
-                <p>A pessoa pode:</p>
-                <pre><code>Importar
-Filtrar
-Ordenar
-Analisar
-Editar
-Exportar</code></pre>
-                <p>sem escrever uma única query.</p>
-                <p>Mas por baixo da interface existe um banco executando SQL.</p>
-                <p>É como se o Valtron tivesse duas formas de trabalhar:</p>
-                <pre><code>              Valtron
+                <p>Mas isso começaria a duplicar trabalho que o DuckDB já faz muito bem.</p>
+                <p>O papel do parser auxiliar continua pequeno:</p>
+                <pre><code>descobrir workbook
+↓
+descobrir sheets
+↓
+identificar estrutura inicial
+↓
+entregar o trabalho pesado ao DuckDB</code></pre>
+                <p>Não:</p>
+                <pre><code>interpretar o XLSX inteiro</code></pre>
+                <p>O princípio continua o mesmo:</p>
+                <blockquote>Inspecionar pouco. Importar com DuckDB.</blockquote>
 
-        ┌────────┴────────┐
-        │                 │
-   Interface visual      SQL
-        │                 │
-        └────────┬────────┘
-                 │
-              DuckDB
-                 │
-               dados</code></pre>
+                <h4>O erro silencioso também precisava ser corrigido</h4>
+                <p>Esse caso mostrou outro problema importante.</p>
+                <p>Quando a inspeção falhava, o usuário praticamente não recebia informação útil.</p>
+                <p>Isso não é aceitável em uma ferramenta de dados.</p>
+                <p>Agora as etapas precisam ser diferenciadas:</p>
+                <pre><code>inspeção do workbook
+detecção do header
+leitura pelo DuckDB
+criação do documento</code></pre>
+                <p>Se uma delas falhar, a interface precisa dizer em qual parte o processo parou.</p>
+                <p>Por exemplo:</p>
+                <pre><code>Não foi possível ler a estrutura deste arquivo Excel.</code></pre>
+                <p>é muito diferente de:</p>
+                <pre><code>O arquivo não possui planilhas.</code></pre>
+                <p>Uma coisa é ausência de dados.</p>
+                <p>Outra é falha de interpretação.</p>
+
+                <h4>Arquivos reais sempre encontram os nossos pressupostos</h4>
+                <p>Essa implementação me lembrou uma coisa comum em engenharia de dados.</p>
+                <p>Quando criamos um parser ou pipeline, começamos com alguns pressupostos:</p>
+                <pre><code>a primeira linha é o cabeçalho
+o XML não tem prefixo
+as colunas terminam onde esperamos
+o arquivo usa shared strings
+a sheet possui dimension</code></pre>
+                <p>Então chegam os dados reais.</p>
+                <p>E começam a aparecer:</p>
+                <pre><code>títulos mesclados
+linhas vazias
+headers deslocados
+namespaces diferentes
+strings representadas de outra forma
+metadados ausentes</code></pre>
+                <p>O desafio não é apenas aceitar mais formatos.</p>
+                <p>É fazer isso sem destruir as decisões que já funcionam bem.</p>
+
+                <h4>O que ficou no Valtron</h4>
+                <p>Depois dessas mudanças, o fluxo de importação de Excel está ficando mais próximo disso:</p>
+                <pre><code>Workbook
+   ↓
+Inspeção leve
+   ↓
+Sheets
+   ↓
+Seleção
+   ↓
+Header
+   ↓
+Largura tabular
+   ↓
+DuckDB
+   ↓
+Documents
+   ↓
+Workspace</code></pre>
+                <p>E cada parte possui uma responsabilidade clara.</p>
+                <p>O workbook informa de onde os dados vieram.</p>
+                <p>A sheet representa um conjunto tabular.</p>
+                <p>O document representa esse conjunto dentro do Valtron.</p>
+                <p>O workspace organiza os documentos.</p>
+                <p>E o DuckDB continua sendo responsável pelo trabalho pesado.</p>
                 <p>
-                  Essa combinação está permitindo que o projeto cresça sem
-                  precisar reinventar operações fundamentais de processamento de
-                  dados.
+                  Para mim, essa foi uma evolução importante porque não adicionou
+                  apenas suporte a várias abas.
                 </p>
-                <p>
-                  No próximo post quero falar sobre uma decisão que parece
-                  contraditória à primeira vista:
-                </p>
-                <blockquote>se o Valtron quer entender os dados, por que ele importa inicialmente as colunas como texto?</blockquote>
-                <p>
-                  A resposta tem mais relação com preservar o dado original do
-                  que com limitações de tipagem.
-                </p>
+                <p>Ela tornou o importador mais preparado para um fato simples:</p>
+                <blockquote>planilhas reais raramente seguem exatamente o formato que esperamos.</blockquote>
 
                 <nav class="article-nav" aria-label="Navegação entre artigos">
-                  <a href="../grid-virtualizada/">← Artigo anterior</a>
+                  <a href="../receitas-reutilizaveis-dados/">← Artigo anterior</a>
                   <a href="../../blog/">Voltar ao blog</a>
-                  <a class="next-link" href="../importar-como-texto/">Próximo artigo →</a>
+                  <span class="next-link">Próximo artigo →</span>
                 </nav>
               </article>
             </div>
@@ -1158,7 +1046,7 @@ Exportar</code></pre>
                 <p>Como a grid virtualizada do Valtron usa janelas de dados, prefetch e cache para navegar arquivos grandes sem travar.</p>
               </article>
 
-              <article class="post-card featured">
+              <article class="post-card">
                 <div class="post-meta">
                   <span>Post 04</span>
                   <span>15 ago 2026</span>
@@ -1212,7 +1100,7 @@ Exportar</code></pre>
                 <p>Receitas de transformação, compatibilidade de colunas, preview, rollback e pipelines reutilizáveis no Valtron.</p>
               </article>
 
-              <article class="post-card">
+              <article class="post-card featured">
                 <div class="post-meta">
                   <span>Post 10</span>
                   <span>16 ago 2026</span>
