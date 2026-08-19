@@ -3,19 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DuckDB dentro de uma aplicação desktop | Valtron</title>
-    <meta name="description" content="Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados." />
-    <link rel="canonical" href="https://zigtecnologia-web.github.io/valtron/posts/duckdb-desktop/" />
+    <title>DuckDB 2.0 e os próximos caminhos para o Valtron | Valtron</title>
+    <meta name="description" content="Quack, parser SQL, I/O assíncrono, Parquet, transformações e como o Valtron pode crescer sem abandonar sua arquitetura local." />
+    <link rel="canonical" href="https://zigtecnologia-web.github.io/valtron/posts/duckdb-2-valtron-caminhos/" />
     <meta property="og:type" content="article" />
     <meta property="og:locale" content="pt_BR" />
     <meta property="og:site_name" content="Valtron" />
-    <meta property="og:title" content="DuckDB dentro de uma aplicação desktop" />
-    <meta property="og:description" content="Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados." />
-    <meta property="og:url" content="https://zigtecnologia-web.github.io/valtron/posts/duckdb-desktop/" />
+    <meta property="og:title" content="DuckDB 2.0 e os próximos caminhos para o Valtron" />
+    <meta property="og:description" content="Quack, parser SQL, I/O assíncrono, Parquet, transformações e como o Valtron pode crescer sem abandonar sua arquitetura local." />
+    <meta property="og:url" content="https://zigtecnologia-web.github.io/valtron/posts/duckdb-2-valtron-caminhos/" />
     <meta property="og:image" content="https://zigtecnologia-web.github.io/valtron/images/valtron-interface-workspace.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="DuckDB dentro de uma aplicação desktop" />
-    <meta name="twitter:description" content="Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados." />
+    <meta name="twitter:title" content="DuckDB 2.0 e os próximos caminhos para o Valtron" />
+    <meta name="twitter:description" content="Quack, parser SQL, I/O assíncrono, Parquet, transformações e como o Valtron pode crescer sem abandonar sua arquitetura local." />
     <meta name="twitter:image" content="https://zigtecnologia-web.github.io/valtron/images/valtron-interface-workspace.png" />
     <style>
       :root {
@@ -744,384 +744,276 @@
         <div class="shell">
           <div class="section-heading">
             <p class="eyebrow">Arquitetura</p>
-            <h1>DuckDB dentro de uma aplicação desktop</h1>
-            <p>Por que o Valtron usa DuckDB embutido para análise local, SQL, profiling, quality e transformações de dados.</p>
+            <h1>DuckDB 2.0 e os próximos caminhos para o Valtron</h1>
+            <p>Quack, parser SQL, I/O assíncrono, Parquet, transformações e como o Valtron pode crescer sem abandonar sua arquitetura local.</p>
           </div>
 
           <div class="blog-layout">
             <div class="post-feed">
-              <article id="post-duckdb-desktop" class="post-card post-prose">
+              <article id="post-duckdb-2-valtron-caminhos" class="post-card post-prose">
                 <div class="post-meta">
                   <span>Arquitetura</span>
-                  <span>15 ago 2026</span>
+                  <span>19 ago 2026</span>
                 </div>
                 <a class="post-permalink" href="./">Link desta postagem</a>
-                <h3>DuckDB dentro de uma aplicação desktop: por que escolhi esse caminho no Valtron</h3>
-                <p>
-                  Quando comecei o Valtron, uma das decisões mais importantes
-                  foi escolher onde os dados ficariam depois da importação.
-                </p>
-                <p>Eu poderia carregar o arquivo e manter tudo em memória.</p>
-                <p>Poderia converter os dados para alguma estrutura própria.</p>
-                <p>
-                  Poderia até exigir que o usuário tivesse PostgreSQL ou outro
-                  banco instalado.
-                </p>
-                <p>Acabei seguindo outro caminho:</p>
-                <blockquote>usar o DuckDB como banco de dados embutido na própria aplicação.</blockquote>
-                <p>Isso resolveu mais problemas do que apenas onde armazenar os dados.</p>
+                <h3>DuckDB 2.0 e os próximos caminhos para o Valtron</h3>
+                <p>O Valtron nasceu com uma decisão importante de arquitetura: utilizar o DuckDB como motor de processamento local.</p>
+                <p>Essa escolha permite importar, consultar e transformar grandes volumes de dados diretamente no computador do usuário, sem depender de um servidor para cada operação.</p>
+                <p>Agora, com o DuckDB 2.0 no horizonte, algumas das novidades apresentadas pelo projeto abrem possibilidades interessantes para o futuro do Valtron.</p>
+                <p>A prévia publicada pelo DuckDB cita recursos como DuckDB como servidor, I/O assíncrono e um novo parser SQL. O interessante, para o Valtron, não é trocar a arquitetura inteira, mas entender quais caminhos passam a ficar possíveis.</p>
 
-                <h4>O que eu precisava</h4>
-                <p>
-                  O Valtron trabalha com arquivos que podem ter centenas de
-                  milhares de registros.
-                </p>
-                <p>
-                  Depois de importar um XLSX ou CSV, eu precisava conseguir
-                  fazer coisas como:
-                </p>
-                <pre><code>SELECT COUNT(*)
+                <h4>DuckDB além do processamento local</h4>
+                <p>Uma das novidades que mais chama atenção é o <strong>Quack</strong>.</p>
+                <p>Historicamente, uma das principais características do DuckDB sempre foi funcionar dentro da própria aplicação.</p>
+                <p>No Valtron, a arquitetura segue essa ideia:</p>
+                <pre><code>Valtron
+   ↓
+Rust
+   ↓
+DuckDB
+   ↓
+Dados locais</code></pre>
+                <p>O arquivo está no computador, o processamento acontece localmente e apenas o resultado necessário é apresentado pela interface.</p>
+                <p>Com o Quack, começa a surgir outra possibilidade: comunicação entre instâncias do DuckDB através da rede.</p>
+                <p>Isso permitiria pensar em algo como:</p>
+                <pre><code>Valtron Desktop
+       ↓
+     Quack
+       ↓
+DuckDB remoto
+       ↓
+ Grandes datasets</code></pre>
+                <p>Isso não significa abandonar o processamento local.</p>
+                <p>Na verdade, os dois modelos podem coexistir.</p>
+                <p>Para arquivos que estão no computador:</p>
+                <pre><code>Valtron
+   ↓
+DuckDB local</code></pre>
+                <p>Para datasets muito maiores armazenados em outra infraestrutura:</p>
+                <pre><code>Valtron
+   ↓
+DuckDB remoto</code></pre>
+                <p>O interessante é que o Valtron poderia continuar sendo uma aplicação desktop enquanto parte do processamento acontece perto dos dados.</p>
+
+                <h4>Processar perto dos dados</h4>
+                <p>Imagine um dataset fictício com dezenas de gigabytes armazenado em um servidor.</p>
+                <p>Trazer tudo para o computador apenas para responder uma pergunta seria desperdício:</p>
+                <pre><code>80 GB
+  ↓
+transferência
+  ↓
+Valtron
+  ↓
+processamento</code></pre>
+                <p>Seria muito mais eficiente enviar a consulta:</p>
+                <pre><code class="language-sql">SELECT
+    categoria,
+    SUM(valor) AS total
+FROM vendas
+GROUP BY categoria;</code></pre>
+                <p>e receber somente o resultado:</p>
+                <pre><code>DuckDB remoto
+      ↓
+processa milhões de registros
+      ↓
+retorna algumas dezenas de linhas
+      ↓
+Valtron</code></pre>
+                <p>Essa separação entre <strong>onde está a interface</strong> e <strong>onde acontece o processamento</strong> pode ser bastante interessante para o futuro do projeto.</p>
+
+                <h4>Um Console SQL mais inteligente</h4>
+                <p>Outra novidade importante é o novo parser SQL baseado em PEG.</p>
+                <p>Isso conversa diretamente com uma área que está evoluindo no Valtron: o Console SQL.</p>
+                <p>Considere um dataset fictício:</p>
+                <pre><code>produto
+categoria
+quantidade
+preco
+data_venda</code></pre>
+                <p>O usuário poderia escrever:</p>
+                <pre><code class="language-sql">SELECT
+    categoria,
+    SUM(preco) AS total
+FROM documento
+GROUP BY categoria;</code></pre>
+                <p>Mas erros acontecem.</p>
+                <p>Alguém poderia escrever:</p>
+                <pre><code class="language-sql">SELECT categorias
 FROM documento;</code></pre>
-                <p>Filtrar:</p>
-                <pre><code>SELECT *
-FROM documento
-WHERE cidade = 'Salvador';</code></pre>
-                <p>Ordenar:</p>
-                <pre><code>SELECT *
-FROM documento
-ORDER BY nome;</code></pre>
-                <p>Agrupar:</p>
-                <pre><code>SELECT cidade, COUNT(*)
-FROM documento
-GROUP BY cidade;</code></pre>
-                <p>
-                  E, mais recentemente, executar operações de profiling e
-                  qualidade dos dados.
-                </p>
-                <p>
-                  Ou seja, depois da importação, boa parte do problema já se
-                  parecia muito com um problema de banco de dados.
-                </p>
-                <p>Então comecei a me perguntar:</p>
-                <blockquote>Por que construir manualmente algo que um banco já sabe fazer?</blockquote>
+                <p>quando a coluna correta é:</p>
+                <pre><code>categoria</code></pre>
+                <p>Em vez de simplesmente apresentar um erro técnico do banco, o Valtron pode utilizar as informações fornecidas pelo DuckDB para construir uma experiência melhor:</p>
+                <pre><code>Coluna &quot;categorias&quot; não encontrada.
 
-                <h4>Mas eu não queria um servidor de banco</h4>
-                <p>Usar PostgreSQL resolveria boa parte dessas necessidades.</p>
-                <p>Só que criaria outras.</p>
-                <p>
-                  Para usar o Valtron, seria necessário ter um servidor
-                  disponível, configurar conexão, usuário, senha, banco, porta e
-                  pensar no ciclo de vida desses dados.
-                </p>
-                <p>Para uma aplicação desktop, eu queria algo mais próximo disso:</p>
-                <pre><code>abre o Valtron
-      ↓
-importa o arquivo
-      ↓
-trabalha com os dados</code></pre>
-                <p>Sem uma etapa:</p>
-                <pre><code>configure seu servidor de banco</code></pre>
-                <p>É aí que o DuckDB encaixou muito bem.</p>
+Você quis dizer &quot;categoria&quot;?</code></pre>
+                <p>O princípio aqui é importante:</p>
+                <blockquote>o DuckDB entende SQL; o Valtron transforma essa informação em uma experiência melhor para o usuário.</blockquote>
+                <p>Não precisamos construir outro parser SQL dentro do Valtron se o próprio motor consegue fornecer informações suficientes.</p>
 
-                <h4>DuckDB não precisa de um servidor</h4>
-                <p>O DuckDB é um banco de dados embutido.</p>
-                <p>No Valtron, ele roda dentro da própria aplicação.</p>
-                <p>A arquitetura ficou aproximadamente assim:</p>
-                <pre><code>┌─────────────────────────┐
-│        Valtron          │
-│                         │
-│      TypeScript         │
-│          ↓              │
-│        Tauri            │
-│          ↓              │
-│         Rust            │
-│          ↓              │
-│        DuckDB           │
-│          ↓              │
-│     dados locais        │
-└─────────────────────────┘</code></pre>
-                <p>O frontend não abre uma conexão com um servidor externo.</p>
-                <p>
-                  Ele chama comandos Tauri, o backend Rust executa as operações
-                  e o DuckDB faz boa parte do trabalho relacionado aos dados.
-                </p>
+                <h4>Autocomplete baseado no dataset</h4>
+                <p>O Console SQL também pode combinar o parser com o schema conhecido pelo Valtron.</p>
+                <p>Se um documento possuir:</p>
+                <pre><code>produto
+categoria
+quantidade
+preco
+data_venda</code></pre>
+                <p>ao começar a escrever:</p>
+                <pre><code class="language-sql">SELECT cat</code></pre>
+                <p>o editor pode sugerir:</p>
+                <pre><code>categoria</code></pre>
+                <p>Da mesma forma, ao utilizar uma coluna com espaços, o Valtron pode inserir automaticamente o identificador corretamente.</p>
+                <p>A ideia é manter SQL de verdade, mas diminuir o conhecimento necessário para começar a utilizá-lo.</p>
 
-                <h4>O arquivo deixa de ser a estrutura de trabalho</h4>
-                <p>Essa foi uma mudança importante no projeto.</p>
-                <p>
-                  Depois que um XLSX é importado, eu não quero continuar abrindo
-                  e percorrendo aquela planilha toda vez que o usuário fizer
-                  alguma coisa.
-                </p>
-                <p>O fluxo é:</p>
-                <pre><code>arquivo.xlsx
-     ↓
-  importação
-     ↓
-   DuckDB
-     ↓
- consultas</code></pre>
-                <p>
-                  Cada documento importado recebe uma tabela física própria
-                  dentro do banco local.
-                </p>
-                <p>A partir daí, a fonte de trabalho passa a ser o DuckDB.</p>
-                <p>Isso significa que fazer um filtro não exige abrir novamente o XLSX.</p>
-                <p>Ordenar também não.</p>
-                <p>Executar SQL também não.</p>
-                <p>Fazer profiling também não.</p>
-                <p>O arquivo é a entrada. O banco passa a ser o ambiente de trabalho.</p>
+                <h4>I/O assíncrono</h4>
+                <p>Outra evolução importante apresentada para o DuckDB envolve operações assíncronas de entrada e saída.</p>
+                <p>Isso se torna particularmente relevante quando os dados não estão mais no SSD local.</p>
+                <p>Hoje podemos pensar no Valtron principalmente assim:</p>
+                <pre><code>Valtron
+├── XLSX
+├── CSV
+└── Parquet</code></pre>
+                <p>No futuro, esse conjunto poderia crescer:</p>
+                <pre><code>Valtron
+├── Arquivos locais
+│   ├── XLSX
+│   ├── CSV
+│   └── Parquet
+│
+└── Fontes remotas
+    ├── Object Storage
+    ├── Parquet remoto
+    └── DuckDB remoto</code></pre>
+                <p>Quanto mais distante o dado estiver fisicamente da aplicação, mais importante se torna reduzir espera e aproveitar melhor as operações de I/O.</p>
 
-                <h4>Isso ficou ainda mais interessante com a grid virtualizada</h4>
-                <p>
-                  No post anterior falei sobre como a interface do Valtron não
-                  carrega centenas de milhares de linhas de uma vez.
-                </p>
-                <p>Ela pede pequenas janelas.</p>
-                <p>É justamente o DuckDB que consegue responder essas solicitações.</p>
-                <p>Algo conceitualmente parecido com:</p>
-                <pre><code>SELECT nome, cpf, cidade
-FROM documento
-WHERE cidade = 'Salvador'
-ORDER BY nome
-LIMIT 100
-OFFSET 1200;</code></pre>
-                <p>
-                  O frontend não precisa receber o dataset inteiro para
-                  descobrir quais são as linhas 1200 até 1299.
-                </p>
-                <p>O banco faz isso.</p>
-                <p>A interface recebe apenas o resultado necessário naquele momento.</p>
-                <p>Isso criou uma separação que considero importante no Valtron:</p>
-                <pre><code>DuckDB
-sabe trabalhar com o dataset
+                <h4>Parquet fica ainda mais interessante</h4>
+                <p>Essa evolução também reforça um formato que faz bastante sentido para o Valtron: <strong>Parquet</strong>.</p>
+                <p>Um fluxo poderia começar com:</p>
+                <pre><code>dados.xlsx</code></pre>
+                <p>passar por:</p>
+                <pre><code>XLSX
+ ↓
+Valtron
+ ↓
+DuckDB
+ ↓
+limpeza
+ ↓
+SQL
+ ↓
+transformação</code></pre>
+                <p>e terminar em:</p>
+                <pre><code>dados_tratados.parquet</code></pre>
+                <p>Esse novo dataset poderia ser utilizado posteriormente sem precisar retornar ao formato original.</p>
+                <p>Para grandes volumes, isso cria uma ponte interessante entre o mundo das planilhas e ferramentas de engenharia e análise de dados.</p>
 
-       ↓
+                <h4>Transformações como documentos</h4>
+                <p>Existe ainda outra direção que considero especialmente interessante.</p>
+                <p>Hoje uma consulta SQL normalmente produz um resultado temporário:</p>
+                <pre><code>Documento
+    ↓
+Consulta SQL
+    ↓
+Resultado</code></pre>
+                <p>Mas e se o resultado pudesse virar outro documento?</p>
+                <pre><code>Documento original
+        ↓
+      SQL
+        ↓
+Novo documento</code></pre>
+                <p>Por exemplo, um dataset fictício contendo vendas poderia gerar diferentes conjuntos:</p>
+                <pre><code>vendas
+  │
+  ├──→ vendas_validas
+  │
+  ├──→ produtos
+  │
+  └──→ resumo_mensal</code></pre>
+                <p>Se o Valtron também guardar qual consulta produziu cada documento, começamos a ter algo ainda mais interessante:</p>
+                <pre><code>dataset A
+    ↓
+transformação
+    ↓
+dataset B</code></pre>
+                <p>A partir daí conceitos como lineage, pipelines e organização de dados começam a surgir naturalmente.</p>
 
-Rust
-coordena as operações
-
-       ↓
-
-Frontend
-sabe apresentar o resultado</code></pre>
-
-                <h4>SQL veio praticamente de graça</h4>
-                <p>
-                  Quando os documentos passaram a existir como tabelas no
-                  DuckDB, apareceu outra possibilidade.
-                </p>
-                <p>
-                  Se já existe um banco SQL por trás do Valtron, por que não
-                  permitir que o usuário consulte os documentos diretamente?
-                </p>
-                <p>Foi assim que entrou o console SQL.</p>
-                <p>
-                  Hoje é possível executar consultas <code>SELECT</code> e CTEs
-                  sobre os documentos importados. O console é somente leitura,
-                  justamente para evitar que uma consulta digitada manualmente
-                  altere silenciosamente os dados.
-                </p>
+                <h4>E as camadas Bronze, Silver e Gold?</h4>
+                <p>Em uma evolução posterior, essas transformações poderiam ser organizadas utilizando conceitos da arquitetura medalhão.</p>
                 <p>Por exemplo:</p>
-                <pre><code>SELECT
-    cidade,
-    COUNT(*) AS quantidade
-FROM documento
-GROUP BY cidade
-ORDER BY quantidade DESC;</code></pre>
-                <p>Isso adicionou uma característica que eu gosto bastante no projeto.</p>
-                <p>Quem não conhece SQL pode usar a interface.</p>
-                <p>Quem conhece SQL pode ir além dela.</p>
-                <p>Os dois trabalham sobre o mesmo conjunto de dados.</p>
+                <pre><code>Fonte
+  ↓
+Bronze
+  ↓
+Silver
+  ↓
+Gold</code></pre>
+                <p>Bronze poderia preservar os dados próximos da origem.</p>
+                <p>Silver poderia representar dados tratados, tipados, normalizados e relacionados.</p>
+                <p>Gold poderia representar datasets preparados para análise, indicadores ou visualizações.</p>
+                <p>O importante é não implementar Bronze, Silver e Gold apenas como etiquetas.</p>
+                <p>Primeiro precisamos ter uma boa estrutura de transformação entre datasets.</p>
+                <p>Depois, as camadas passam a organizar algo que já funciona.</p>
 
-                <h4>Depois veio o Data Profiling</h4>
-                <p>
-                  Quando comecei a implementar análise de colunas, a escolha
-                  pelo DuckDB fez ainda mais sentido.
-                </p>
-                <p>Imagine que eu queira saber sobre uma coluna <code>NOTA</code>:</p>
-                <pre><code>quantos valores existem?
-quantos estão vazios?
-quantos são distintos?
-qual o menor valor?
-qual o maior?
-qual a média?
-como os valores estão distribuídos?</code></pre>
-                <p>Eu poderia buscar 600 mil valores para o Rust e calcular tudo.</p>
-                <p>Mas seria estranho fazer isso tendo um motor analítico logo abaixo.</p>
-                <p>É muito mais interessante executar operações próximas dos dados:</p>
-                <pre><code>604.270 registros
-       ↓
-    DuckDB
-       ↓
-COUNT
-DISTINCT
-MIN
-MAX
-AVG
-GROUP BY
-       ↓
-resultado pequeno
-       ↓
-interface</code></pre>
-                <p>
-                  Em vez de transportar centenas de milhares de valores,
-                  transporto o resultado da análise.
-                </p>
+                <h4>Local e remoto podem coexistir</h4>
+                <p>Talvez uma das possibilidades mais interessantes dessa evolução do DuckDB seja não precisar escolher entre uma aplicação local e uma infraestrutura remota.</p>
+                <p>Podemos imaginar:</p>
+                <pre><code>Valtron
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+           Local               Remoto
+             │                   │
+           DuckDB              Quack
+             │                   │
+      arquivos locais      DuckDB remoto</code></pre>
+                <p>Um arquivo pequeno ou médio continua sendo processado diretamente no computador.</p>
+                <p>Um dataset muito maior pode permanecer em uma máquina preparada para isso.</p>
+                <p>O usuário continua trabalhando na mesma interface.</p>
+                <p>O que muda é onde o trabalho pesado acontece.</p>
 
-                <h4>O mesmo vale para Data Quality</h4>
-                <p>Considere uma regra:</p>
-                <blockquote>A nota deve estar entre 0 e 10.</blockquote>
-                <p>O frontend não precisa receber todas as notas e executar:</p>
-                <pre><code>if (nota &lt; 0 || nota &gt; 10) {
-    // inválido
-}</code></pre>
-                <p>A ideia é deixar o banco encontrar essas linhas.</p>
-                <p>O mesmo princípio pode ser usado para:</p>
-                <pre><code>valores vazios
-duplicidades
-intervalos numéricos
-comprimento
-valores permitidos
-datas inválidas</code></pre>
-                <p>
-                  O Valtron fica responsável por transformar essas operações em
-                  uma experiência visual.
-                </p>
-                <p>O DuckDB continua fazendo o trabalho pesado.</p>
+                <h4>Ainda não é hora de mudar tudo</h4>
+                <p>Algumas dessas tecnologias ainda estão evoluindo.</p>
+                <p>Por isso, não faria sentido alterar toda a arquitetura do Valtron agora apenas para acompanhar as novidades.</p>
+                <p>Existe uma sequência mais segura:</p>
+                <pre><code>Console SQL
+    ↓
+contexto por documento
+    ↓
+autocomplete e melhores erros
+    ↓
+consultas salvas
+    ↓
+resultado como novo documento
+    ↓
+transformações
+    ↓
+lineage
+    ↓
+pipelines</code></pre>
+                <p>Depois disso, podemos avaliar recursos maiores:</p>
+                <pre><code>fontes externas
+      ↓
+processamento remoto
+      ↓
+orquestração
+      ↓
+arquitetura medalhão</code></pre>
 
-                <h4>E agora as transformações</h4>
-                <p>
-                  Esse mesmo raciocínio está começando a aparecer na parte de
-                  preparação dos dados.
-                </p>
-                <p>Imagine 600 mil nomes:</p>
-                <pre><code>"  JOÃO SILVA  "
-"MARIA SANTOS "
-" PEDRO SOUZA"</code></pre>
-                <p>Quero remover espaços das extremidades.</p>
-                <p>Uma implementação ingênua poderia fazer:</p>
-                <pre><code>buscar 600 mil registros
-        ↓
-Rust
-        ↓
-loop
-        ↓
-alterar um por um
-        ↓
-DuckDB</code></pre>
-                <p>Mas o banco já sabe fazer:</p>
-                <pre><code>UPDATE documento
-SET nome = TRIM(nome);</code></pre>
-                <p>Essa diferença começa a definir bastante a arquitetura do Valtron.</p>
-                <p>Sempre que possível:</p>
-                <blockquote>levar a operação até os dados, e não os dados até a operação.</blockquote>
-
-                <h4>Local-first acabou virando uma característica do projeto</h4>
-                <p>
-                  Outra consequência dessa escolha é que o Valtron consegue
-                  trabalhar localmente.
-                </p>
-                <p>
-                  O usuário importa o arquivo e os dados permanecem no ambiente
-                  da aplicação.
-                </p>
-                <p>
-                  Não é necessário enviar 600 mil registros para uma API apenas
-                  para executar um filtro ou calcular uma distribuição.
-                </p>
-                <p>
-                  Isso é interessante tanto por simplicidade quanto para
-                  situações em que os dados não deveriam sair da máquina.
-                </p>
-                <p>Não significa que o Valtron nunca terá integrações externas.</p>
-                <p>
-                  PostgreSQL, Parquet, APIs ou outros destinos podem fazer
-                  sentido no futuro.
-                </p>
-                <p>
-                  Mas eles podem ser <strong>integrações</strong>, e não
-                  requisitos para a aplicação funcionar.
-                </p>
-
-                <h4>DuckDB não substitui PostgreSQL</h4>
-                <p>Essa distinção é importante.</p>
-                <p>
-                  Eu não escolheria DuckDB simplesmente porque ele é "melhor"
-                  que PostgreSQL.
-                </p>
-                <p>São problemas diferentes.</p>
-                <p>
-                  Se eu estivesse construindo um sistema transacional com vários
-                  usuários simultaneamente criando e atualizando registros,
-                  PostgreSQL provavelmente faria muito mais sentido.
-                </p>
-                <p>O cenário do Valtron é outro:</p>
-                <pre><code>arquivo grande
-     ↓
-processamento local
-     ↓
-consultas analíticas
-     ↓
-profiling
-     ↓
-qualidade
-     ↓
-transformações</code></pre>
-                <p>
-                  Nesse contexto, um banco analítico embutido combina muito bem
-                  com o problema.
-                </p>
-                <p>
-                  A escolha da tecnologia começa pelo tipo de trabalho que ela
-                  precisa executar.
-                </p>
-
-                <h4>O que mais gostei dessa arquitetura</h4>
-                <p>
-                  Talvez a parte mais interessante seja que o DuckDB não aparece
-                  para quem simplesmente quer abrir uma planilha.
-                </p>
-                <p>A pessoa pode:</p>
-                <pre><code>Importar
-Filtrar
-Ordenar
-Analisar
-Editar
-Exportar</code></pre>
-                <p>sem escrever uma única query.</p>
-                <p>Mas por baixo da interface existe um banco executando SQL.</p>
-                <p>É como se o Valtron tivesse duas formas de trabalhar:</p>
-                <pre><code>              Valtron
-
-        ┌────────┴────────┐
-        │                 │
-   Interface visual      SQL
-        │                 │
-        └────────┬────────┘
-                 │
-              DuckDB
-                 │
-               dados</code></pre>
-                <p>
-                  Essa combinação está permitindo que o projeto cresça sem
-                  precisar reinventar operações fundamentais de processamento de
-                  dados.
-                </p>
-                <p>
-                  No próximo post quero falar sobre uma decisão que parece
-                  contraditória à primeira vista:
-                </p>
-                <blockquote>se o Valtron quer entender os dados, por que ele importa inicialmente as colunas como texto?</blockquote>
-                <p>
-                  A resposta tem mais relação com preservar o dado original do
-                  que com limitações de tipagem.
-                </p>
+                <h4>O que mais chama atenção no DuckDB 2.0</h4>
+                <p>Para o Valtron, talvez o ponto mais interessante não seja uma funcionalidade específica.</p>
+                <p>É a direção que o DuckDB está tomando.</p>
+                <p>O projeto continua extremamente forte como banco analítico embarcado, mas começa a expandir os cenários em que esse mesmo motor pode operar.</p>
+                <p>Isso abre uma possibilidade interessante para o Valtron:</p>
+                <blockquote>crescer sem abandonar sua arquitetura local.</blockquote>
+                <p>Podemos continuar oferecendo uma experiência rápida para quem simplesmente quer abrir e explorar um arquivo, enquanto construímos gradualmente recursos para transformações, datasets maiores e processamento remoto.</p>
+                <p>Se essa evolução continuar, o DuckDB deixa de ser apenas o motor que permite ao Valtron abrir arquivos rapidamente.</p>
+                <p>Ele pode se tornar a base para uma plataforma local de exploração e transformação de dados muito mais completa.</p>
+                <p>Referências: <a href="https://duckdb.org/2026/08/17/duckdb-20-highlights.html">prévia do DuckDB 2.0</a>, <a href="https://duckdb.org/quack/">Quack Remote Protocol</a> e <a href="https://duckdb.org/2026/07/31/asynchronous-io">I/O assíncrono no DuckDB</a>.</p>
 
                 <nav class="article-nav" aria-label="Navegação entre artigos">
-                  <a href="../grid-virtualizada/">← Artigo anterior</a>
+                  <a href="../excel-multiplas-abas-headers-ooxml/">← Artigo anterior</a>
                   <a href="../../blog/">Voltar ao blog</a>
-                  <a href="../importar-como-texto/">Próximo artigo →</a>
+                  <span class="next-link">Próximo artigo →</span>
                 </nav>
               </article>
             </div>
@@ -1158,7 +1050,7 @@ Exportar</code></pre>
                 <p>Como a grid virtualizada do Valtron usa janelas de dados, prefetch e cache para navegar arquivos grandes sem travar.</p>
               </article>
 
-              <article class="post-card featured">
+              <article class="post-card">
                 <div class="post-meta">
                   <span>Post 04</span>
                   <span>15 ago 2026</span>
@@ -1221,7 +1113,7 @@ Exportar</code></pre>
                 <p>Múltiplas abas, headers deslocados, namespaces OOXML e a decisão de inspecionar pouco para manter o DuckDB como caminho pesado de importação.</p>
               </article>
 
-              <article class="post-card">
+              <article class="post-card featured">
                 <div class="post-meta">
                   <span>Post 11</span>
                   <span>19 ago 2026</span>
