@@ -100,6 +100,16 @@ type DocumentInfo = {
   import_performance: ImportPerformance | null;
 };
 
+type SqlContextMode = "document" | "workspace";
+
+type SqlSourceInfo = {
+  id: string;
+  name: string;
+  table_name: string;
+  columns: string[];
+  column_types: Record<string, string>;
+};
+
 type WorkspaceInfo = {
   id: string;
   name: string;
@@ -225,6 +235,44 @@ type ResizeState = {
   startWidth: number;
 };
 
+type SqlSuggestionKind = "keyword" | "function" | "table" | "column";
+
+type SqlSuggestion = {
+  label: string;
+  insertText: string;
+  detail: string;
+  kind: SqlSuggestionKind;
+};
+
+type SqlHistoryEntry = {
+  id: string;
+  query: string;
+  contextMode?: SqlContextMode;
+  documentId?: string | null;
+  workspaceId?: string | null;
+  executedAt: number;
+  rowCount: number | null;
+  durationMs: number | null;
+  error: string | null;
+};
+
+type SavedSqlQuery = {
+  id: string;
+  name: string;
+  query: string;
+  contextMode?: SqlContextMode;
+  documentId?: string | null;
+  workspaceId?: string | null;
+  savedAt: number;
+};
+
+type SqlFriendlyError = {
+  title: string;
+  message: string;
+  suggestion?: string;
+  technical: string;
+};
+
 const PAGE_SIZE = 100;
 const GRID_BATCH_SIZE = PAGE_SIZE;
 const GRID_ROW_HEIGHT = 42;
@@ -235,6 +283,55 @@ const GRID_ROW_NUMBER_WIDTH = 72;
 const FILTER_DEBOUNCE_MS = 275;
 const COLUMN_VISIBILITY_STORAGE_PREFIX = "valtron.columnVisibility.v1";
 const COLUMN_WIDTH_STORAGE_PREFIX = "valtron.columnWidths.v1";
+const SQL_HISTORY_STORAGE_KEY = "valtron.sqlHistory.v1";
+const SQL_SAVED_STORAGE_KEY = "valtron.savedSql.v1";
+const SQL_HISTORY_LIMIT = 20;
+const SQL_KEYWORDS = [
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "GROUP BY",
+  "ORDER BY",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "JOIN",
+  "LEFT JOIN",
+  "INNER JOIN",
+  "ON",
+  "AS",
+  "AND",
+  "OR",
+  "WITH",
+  "DISTINCT",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "IS NULL",
+  "IS NOT NULL",
+  "LIKE",
+  "IN",
+];
+const SQL_FUNCTIONS = [
+  "COUNT()",
+  "SUM()",
+  "AVG()",
+  "MIN()",
+  "MAX()",
+  "ROUND()",
+  "COALESCE()",
+  "NULLIF()",
+  "TRY_CAST()",
+  "CAST()",
+  "LOWER()",
+  "UPPER()",
+  "TRIM()",
+  "REPLACE()",
+  "REGEXP_MATCHES()",
+  "STRPTIME()",
+];
 const COLUMN_WIDTH_CONFIG = {
   min: 80,
   default: 180,
@@ -309,6 +406,22 @@ let qualityState: QualityState = createQualityState();
 let transformationState: TransformationState = createTransformationState();
 let profilingRequestSeq = 0;
 const profilingCache = new ProfilingSessionCache();
+let sqlPopoverMode: "columns" | "history" | "saved" | "menu" | null = null;
+let sqlColumnSearch = "";
+let sqlAutocompleteOpen = false;
+let sqlAutocompleteItems: SqlSuggestion[] = [];
+let sqlAutocompleteIndex = 0;
+let sqlAutocompleteRange: { start: number; end: number } | null = null;
+let sqlHistory: SqlHistoryEntry[] = [];
+let savedSqlQueries: SavedSqlQuery[] = [];
+let lastSqlExecutionMs: number | null = null;
+let lastSqlFriendlyError: SqlFriendlyError | null = null;
+let sqlSaveMode: "query" | "result" | null = null;
+let sqlContextMode: SqlContextMode = "document";
+let sqlSources: SqlSourceInfo[] = [];
+let sqlSourcesRequestSeq = 0;
+sqlHistory = readSqlHistory();
+savedSqlQueries = readSavedSqlQueries();
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -633,17 +746,61 @@ app.innerHTML = `
           <p class="toolbar-title">Console SQL</p>
           <p id="sql-subtitle" class="toolbar-subtitle">Consultas de leitura, limite visual de 500 linhas.</p>
         </div>
+        <div class="sql-toolbar" aria-label="Ferramentas SQL">
+          <label class="sql-context-control">
+            <span>Contexto</span>
+            <select id="sql-context-mode">
+              <option value="document">Documento atual</option>
+              <option value="workspace">Workspace</option>
+            </select>
+          </label>
+          <span id="sql-context-label" class="sql-context-label">Documento atual</span>
+          <button id="sql-columns-button" class="ghost-button compact-button" type="button">Colunas</button>
+          <button id="sql-history-button" class="ghost-button compact-button" type="button">Historico</button>
+          <button id="sql-saved-button" class="ghost-button compact-button" type="button">Salvas</button>
+          <button id="sql-menu-button" class="ghost-button compact-button icon-only-button" type="button" aria-label="Acoes SQL">...</button>
+        </div>
         <div class="sql-code-wrap">
           <pre id="sql-highlight" aria-hidden="true"></pre>
-          <textarea id="sql-query" spellcheck="false">SELECT * FROM imported_documents;</textarea>
+          <textarea id="sql-query" spellcheck="false">SELECT *
+FROM documento;</textarea>
+          <div id="sql-autocomplete" class="sql-autocomplete hidden" role="listbox"></div>
         </div>
         <div class="sql-actions">
           <button id="run-sql" class="primary-button" type="button">Executar SQL</button>
           <button id="clear-sql" class="ghost-button" type="button">Voltar documento</button>
         </div>
       </div>
-      <p id="sql-status" class="toolbar-subtitle">O resultado vai aparecer na grid principal.</p>
+      <div id="sql-popover" class="sql-popover hidden"></div>
+      <div id="sql-error" class="sql-error-panel hidden"></div>
+      <div class="sql-result-row">
+        <p id="sql-status" class="toolbar-subtitle">O resultado vai aparecer na grid principal.</p>
+        <button id="save-sql-result" class="ghost-button compact-button hidden" type="button">Salvar como documento</button>
+      </div>
     </section>
+
+    <div id="sql-save-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="sql-save-title">
+      <section class="modal-panel narrow-panel">
+        <div class="modal-header">
+          <div>
+            <p id="sql-save-eyebrow" class="eyebrow">SQL</p>
+            <h2 id="sql-save-title">Salvar consulta</h2>
+          </div>
+          <button id="cancel-sql-save-x" class="icon-button modal-close" type="button" aria-label="Fechar">×</button>
+        </div>
+        <form id="sql-save-form">
+          <div class="form-field">
+            <label id="sql-save-name-label" for="sql-save-name">Nome</label>
+            <input id="sql-save-name" name="sql-save-name" autocomplete="off" />
+          </div>
+          <p id="sql-save-error" class="update-error hidden"></p>
+          <div class="modal-actions">
+            <button id="cancel-sql-save" class="ghost-button" type="button">Cancelar</button>
+            <button id="confirm-sql-save" class="primary-button" type="submit">Salvar</button>
+          </div>
+        </form>
+      </section>
+    </div>
 
     <section id="grid-details-panel" class="grid-details-panel hidden" aria-label="Detalhes da grid">
       <div class="details-panel-header">
@@ -807,9 +964,29 @@ const toggleSqlButton = document.querySelector<HTMLButtonElement>("#toggle-sql")
 const sqlShellEl = document.querySelector<HTMLElement>("#sql-shell");
 const sqlQueryEl = document.querySelector<HTMLTextAreaElement>("#sql-query");
 const sqlHighlightEl = document.querySelector<HTMLPreElement>("#sql-highlight");
+const sqlContextModeEl = document.querySelector<HTMLSelectElement>("#sql-context-mode");
+const sqlContextLabelEl = document.querySelector<HTMLSpanElement>("#sql-context-label");
+const sqlAutocompleteEl = document.querySelector<HTMLDivElement>("#sql-autocomplete");
+const sqlColumnsButton = document.querySelector<HTMLButtonElement>("#sql-columns-button");
+const sqlHistoryButton = document.querySelector<HTMLButtonElement>("#sql-history-button");
+const sqlSavedButton = document.querySelector<HTMLButtonElement>("#sql-saved-button");
+const sqlMenuButton = document.querySelector<HTMLButtonElement>("#sql-menu-button");
+const sqlPopoverEl = document.querySelector<HTMLDivElement>("#sql-popover");
+const sqlErrorEl = document.querySelector<HTMLDivElement>("#sql-error");
 const sqlStatusEl = document.querySelector<HTMLParagraphElement>("#sql-status");
 const runSqlButton = document.querySelector<HTMLButtonElement>("#run-sql");
 const clearSqlButton = document.querySelector<HTMLButtonElement>("#clear-sql");
+const saveSqlResultButton = document.querySelector<HTMLButtonElement>("#save-sql-result");
+const sqlSaveModalEl = document.querySelector<HTMLDivElement>("#sql-save-modal");
+const sqlSaveFormEl = document.querySelector<HTMLFormElement>("#sql-save-form");
+const sqlSaveEyebrowEl = document.querySelector<HTMLParagraphElement>("#sql-save-eyebrow");
+const sqlSaveTitleEl = document.querySelector<HTMLHeadingElement>("#sql-save-title");
+const sqlSaveNameLabelEl = document.querySelector<HTMLLabelElement>("#sql-save-name-label");
+const sqlSaveNameEl = document.querySelector<HTMLInputElement>("#sql-save-name");
+const sqlSaveErrorEl = document.querySelector<HTMLParagraphElement>("#sql-save-error");
+const cancelSqlSaveXButton = document.querySelector<HTMLButtonElement>("#cancel-sql-save-x");
+const cancelSqlSaveButton = document.querySelector<HTMLButtonElement>("#cancel-sql-save");
+const confirmSqlSaveButton = document.querySelector<HTMLButtonElement>("#confirm-sql-save");
 const loadingOverlayEl = document.querySelector<HTMLDivElement>("#loading-overlay");
 const loadingMessageEl = document.querySelector<HTMLSpanElement>("#loading-message");
 const rowCountEl = document.querySelector<HTMLElement>("#row-count");
@@ -835,6 +1012,20 @@ function setStatus(message: string) {
   if (statusEl) {
     statusEl.textContent = message;
   }
+}
+
+function formatImportErrorMessage(error: unknown) {
+  const message = String(error);
+
+  if (message.includes("Detalhes tecnicos:")) {
+    return message;
+  }
+
+  if (message.includes("DuckDB nao conseguiu criar a tabela diretamente do XLSX")) {
+    return `Nao foi possivel importar esta planilha.\n\nO arquivo possui uma estrutura XLSX que nao pode ser lida pelo mecanismo de importacao.\n\nDetalhes tecnicos: ${message}`;
+  }
+
+  return message;
 }
 
 function setManualUpdateStatus(message: string) {
@@ -1130,14 +1321,42 @@ function updateCachedCell(rowIndex: number, visibleColumnIndex: number, value: C
   return true;
 }
 
-function highlightSql(value: string) {
-  return escapeHtml(value)
-    .replace(
-      /\b(SELECT|FROM|WHERE|GROUP|BY|ORDER|LIMIT|OFFSET|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AS|AND|OR|WITH|COUNT|SUM|AVG|MIN|MAX|DISTINCT|CASE|WHEN|THEN|ELSE|END|HAVING|DESC|ASC|NULL|IS|LIKE|NOT|IN)\b/gi,
-      '<span class="sql-token-keyword">$1</span>',
-    )
-    .replace(/('[^']*')/g, '<span class="sql-token-string">$1</span>')
-    .replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="sql-token-number">$1</span>');
+function appendSqlHighlightText(fragment: DocumentFragment, text: string, className?: string) {
+  if (!text) {
+    return;
+  }
+
+  if (!className) {
+    fragment.append(document.createTextNode(text));
+    return;
+  }
+
+  const span = document.createElement("span");
+  span.className = className;
+  span.textContent = text;
+  fragment.append(span);
+}
+
+function buildSqlHighlightFragment(value: string) {
+  const fragment = document.createDocumentFragment();
+  const tokenPattern =
+    /('(?:''|[^'])*')|\b(SELECT|FROM|WHERE|GROUP|BY|ORDER|LIMIT|OFFSET|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AS|AND|OR|WITH|COUNT|SUM|AVG|MIN|MAX|DISTINCT|CASE|WHEN|THEN|ELSE|END|HAVING|DESC|ASC|NULL|IS|LIKE|NOT|IN)\b|\b(\d+(?:\.\d+)?)\b/gi;
+  let cursor = 0;
+
+  for (const match of value.matchAll(tokenPattern)) {
+    const index = match.index ?? 0;
+    appendSqlHighlightText(fragment, value.slice(cursor, index));
+    appendSqlHighlightText(
+      fragment,
+      match[0],
+      match[1] ? "sql-token-string" : match[2] ? "sql-token-keyword" : "sql-token-number",
+    );
+    cursor = index + match[0].length;
+  }
+
+  appendSqlHighlightText(fragment, value.slice(cursor));
+  fragment.append(document.createTextNode("\n"));
+  return fragment;
 }
 
 function syncSqlHighlight() {
@@ -1145,7 +1364,621 @@ function syncSqlHighlight() {
     return;
   }
 
-  sqlHighlightEl.innerHTML = `${highlightSql(sqlQueryEl.value)}\n`;
+  sqlHighlightEl.replaceChildren(buildSqlHighlightFragment(sqlQueryEl.value));
+}
+
+function sqlIdentifier(identifier: string) {
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
+    return identifier;
+  }
+
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function currentSqlSource() {
+  return sqlSources.find((source) => source.id === currentDocumentId) ?? sqlSources[0] ?? null;
+}
+
+function sqlContextPayload() {
+  return {
+    contextMode: sqlContextMode,
+    workspaceId: currentWorkspaceId,
+    documentId: sqlContextMode === "document" ? currentDocumentId : null,
+  };
+}
+
+function sqlContextDocumentName(documentId: string | null | undefined) {
+  if (!documentId) return null;
+  return documents.find((document) => document.id === documentId)?.file_name ?? null;
+}
+
+function renderSqlContext() {
+  if (sqlContextModeEl) {
+    sqlContextModeEl.value = sqlContextMode;
+  }
+
+  if (!sqlContextLabelEl) {
+    return;
+  }
+
+  if (sqlContextMode === "document") {
+    const document = selectedDocument();
+    sqlContextLabelEl.textContent = document ? `Documento: ${document.file_name}` : "Documento: nenhum selecionado";
+    sqlContextLabelEl.title = document
+      ? `ID logico: ${document.id}\nFonte fisica: ${document.table_name}`
+      : "";
+    return;
+  }
+
+  const workspace = selectedWorkspace();
+  sqlContextLabelEl.textContent = workspace ? `Workspace: ${workspace.name}` : "Workspace: nenhum selecionado";
+  sqlContextLabelEl.title = currentWorkspaceId ? `ID logico: ${currentWorkspaceId}` : "";
+}
+
+function activeSqlColumns() {
+  if (sqlContextMode === "document") {
+    return currentSqlSource()?.columns ?? currentPage?.columns ?? currentSummary?.columns ?? [];
+  }
+
+  return sqlSources.flatMap((source) => source.columns);
+}
+
+function activeSqlColumnType(column: string) {
+  const sourceType = sqlSources.find((source) => source.column_types[column])?.column_types[column];
+  return sourceType?.toUpperCase() ?? currentPage?.column_types?.[column]?.toUpperCase() ?? "VARCHAR";
+}
+
+function activeSqlTableName() {
+  if (sqlContextMode === "document") {
+    return "documento";
+  }
+
+  return null;
+}
+
+function sqlAliasesInQuery(query: string) {
+  const aliases = new Set<string>();
+  const aliasPattern = /\b(?:FROM|JOIN)\s+(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\s+(?:AS\s+)?([A-Za-z_][A-Za-z0-9_]*)\b/gi;
+
+  for (const match of query.matchAll(aliasPattern)) {
+    const alias = match[1];
+    if (!SQL_KEYWORDS.some((keyword) => keyword.toLowerCase() === alias.toLowerCase())) {
+      aliases.add(alias);
+    }
+  }
+
+  return Array.from(aliases);
+}
+
+function readSqlHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SQL_HISTORY_STORAGE_KEY) ?? "[]");
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((entry): entry is SqlHistoryEntry => typeof entry?.id === "string" && typeof entry?.query === "string")
+          .slice(0, SQL_HISTORY_LIMIT)
+      : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function writeSqlHistory() {
+  localStorage.setItem(SQL_HISTORY_STORAGE_KEY, JSON.stringify(sqlHistory.slice(0, SQL_HISTORY_LIMIT)));
+}
+
+function readSavedSqlQueries() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SQL_SAVED_STORAGE_KEY) ?? "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (entry): entry is SavedSqlQuery =>
+            typeof entry?.id === "string" && typeof entry?.name === "string" && typeof entry?.query === "string",
+        )
+      : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function writeSavedSqlQueries() {
+  localStorage.setItem(SQL_SAVED_STORAGE_KEY, JSON.stringify(savedSqlQueries));
+}
+
+async function refreshSqlSources() {
+  const requestSeq = ++sqlSourcesRequestSeq;
+
+  if (!currentWorkspaceId || (sqlContextMode === "document" && !currentDocumentId)) {
+    sqlSources = [];
+    renderSqlContext();
+    renderSqlAutocomplete();
+    return;
+  }
+
+  try {
+    const sources = await invoke<SqlSourceInfo[]>("list_sql_sources", sqlContextPayload());
+
+    if (requestSeq !== sqlSourcesRequestSeq) {
+      return;
+    }
+
+    sqlSources = sources;
+  } catch (error) {
+    if (requestSeq !== sqlSourcesRequestSeq) {
+      return;
+    }
+
+    sqlSources = [];
+    setStatus(String(error));
+  } finally {
+    if (requestSeq === sqlSourcesRequestSeq) {
+      renderSqlContext();
+      renderSqlAutocomplete();
+    }
+  }
+}
+
+function setSqlEditorValue(query: string) {
+  if (!sqlQueryEl) return;
+  sqlQueryEl.value = query;
+  syncSqlHighlight();
+  updateSqlAutocomplete();
+  sqlQueryEl.focus();
+}
+
+function insertSqlText(text: string, range = sqlAutocompleteRange) {
+  if (!sqlQueryEl) return;
+  const start = range?.start ?? sqlQueryEl.selectionStart ?? sqlQueryEl.value.length;
+  const end = range?.end ?? sqlQueryEl.selectionEnd ?? start;
+  sqlQueryEl.setRangeText(text, start, end, "end");
+  syncSqlHighlight();
+  updateSqlAutocomplete();
+  sqlQueryEl.focus();
+}
+
+function currentSqlToken() {
+  if (!sqlQueryEl) return null;
+  const end = sqlQueryEl.selectionStart ?? 0;
+  const before = sqlQueryEl.value.slice(0, end);
+  const match = before.match(/[A-Za-z0-9_\u00C0-\u017F" ]*$/);
+  const raw = match?.[0] ?? "";
+  const token = raw.replace(/^.*[\s,(=+\-*/]([A-Za-z0-9_\u00C0-\u017F"]*)$/, "$1");
+  const start = end - token.length;
+  return { token: token.replace(/^"/, ""), start, end };
+}
+
+function sqlSuggestionsForToken(token: string) {
+  const normalized = token.toLowerCase();
+  const tableName = activeSqlTableName();
+  const columns = activeSqlColumns();
+  const currentSource = currentSqlSource();
+  const keywordSuggestions = SQL_KEYWORDS.map((keyword) => ({
+    label: keyword,
+    insertText: keyword,
+    detail: "SQL",
+    kind: "keyword" as const,
+  }));
+  const functionSuggestions = SQL_FUNCTIONS.map((fn) => ({
+    label: fn,
+    insertText: fn,
+    detail: "DuckDB",
+    kind: "function" as const,
+  }));
+  const aliasSuggestions = sqlContextMode === "workspace" && sqlQueryEl
+    ? sqlAliasesInQuery(sqlQueryEl.value).map((alias) => ({
+        label: alias,
+        insertText: alias,
+        detail: "Alias",
+        kind: "table" as const,
+      }))
+    : [];
+  const documentSuggestions =
+    sqlContextMode === "document"
+      ? tableName
+        ? [
+            {
+              label: tableName,
+              insertText: tableName,
+              detail: currentSource?.name ?? "Documento atual",
+              kind: "table" as const,
+            },
+            ...(currentSource
+              ? [
+                  {
+                    label: currentSource.name,
+                    insertText: sqlIdentifier(currentSource.name),
+                    detail: "Nome logico",
+                    kind: "table" as const,
+                  },
+                ]
+              : []),
+          ]
+        : []
+      : sqlSources.map((source) => ({
+          label: source.name,
+          insertText: sqlIdentifier(source.name),
+          detail: "Documento",
+          kind: "table" as const,
+        }));
+  const columnSuggestions = columns.map((column) => ({
+    label: column,
+    insertText: sqlIdentifier(column),
+    detail: activeSqlColumnType(column),
+    kind: "column" as const,
+  }));
+  const contextualSuggestions =
+    sqlContextMode === "document"
+      ? [...keywordSuggestions, ...documentSuggestions, ...columnSuggestions, ...functionSuggestions]
+      : [...keywordSuggestions, ...documentSuggestions, ...aliasSuggestions, ...columnSuggestions, ...functionSuggestions];
+
+  return contextualSuggestions
+    .filter((suggestion) => !normalized || suggestion.label.toLowerCase().includes(normalized))
+    .slice(0, 12);
+}
+
+function placeSqlFloatingPanel(panel: HTMLElement, anchor: HTMLElement | null) {
+  if (!sqlShellEl || !anchor) return;
+  const shellRect = sqlShellEl.getBoundingClientRect();
+  const anchorRect = anchor.getBoundingClientRect();
+  panel.style.top = `${anchorRect.bottom - shellRect.top + 8}px`;
+  panel.style.left = `${Math.max(12, anchorRect.left - shellRect.left)}px`;
+}
+
+function renderSqlAutocomplete() {
+  if (!sqlAutocompleteEl) return;
+
+  if (!sqlAutocompleteOpen || sqlAutocompleteItems.length === 0) {
+    sqlAutocompleteEl.classList.add("hidden");
+    sqlAutocompleteEl.innerHTML = "";
+    return;
+  }
+
+  sqlAutocompleteEl.innerHTML = sqlAutocompleteItems
+    .map(
+      (item, index) => `
+        <button class="sql-suggestion ${index === sqlAutocompleteIndex ? "active" : ""}" type="button" data-sql-suggestion="${index}" role="option" aria-selected="${index === sqlAutocompleteIndex}">
+          <span>${escapeHtml(item.label)}</span>
+          <small>${escapeHtml(item.detail)}</small>
+        </button>
+      `,
+    )
+    .join("");
+  sqlAutocompleteEl.classList.remove("hidden");
+}
+
+function updateSqlAutocomplete() {
+  const token = currentSqlToken();
+
+  if (!token || token.token.length < 1 || !document.activeElement?.isSameNode(sqlQueryEl)) {
+    sqlAutocompleteOpen = false;
+    renderSqlAutocomplete();
+    return;
+  }
+
+  sqlAutocompleteRange = { start: token.start, end: token.end };
+  sqlAutocompleteItems = sqlSuggestionsForToken(token.token);
+  sqlAutocompleteIndex = Math.min(sqlAutocompleteIndex, Math.max(0, sqlAutocompleteItems.length - 1));
+  sqlAutocompleteOpen = sqlAutocompleteItems.length > 0;
+  renderSqlAutocomplete();
+}
+
+function applySqlSuggestion(index = sqlAutocompleteIndex) {
+  const suggestion = sqlAutocompleteItems[index];
+
+  if (!suggestion) return;
+
+  insertSqlText(suggestion.insertText);
+  sqlAutocompleteOpen = false;
+  renderSqlAutocomplete();
+}
+
+function closeSqlPopover() {
+  sqlPopoverMode = null;
+  sqlPopoverEl?.classList.add("hidden");
+  if (sqlPopoverEl) {
+    sqlPopoverEl.innerHTML = "";
+  }
+}
+
+function renderSqlPopover() {
+  if (!sqlPopoverEl || !sqlPopoverMode) return;
+
+  if (sqlPopoverMode === "columns") {
+    const search = sqlColumnSearch.toLowerCase();
+    const sources = sqlSources
+      .map((source) => ({
+        ...source,
+        columns: source.columns.filter(
+          (column) =>
+            !search ||
+            column.toLowerCase().includes(search) ||
+            (sqlContextMode === "workspace" && source.name.toLowerCase().includes(search)),
+        ),
+      }))
+      .filter((source) => source.columns.length > 0 || (sqlContextMode === "workspace" && source.name.toLowerCase().includes(search)));
+    const totalColumns = sources.reduce((total, source) => total + source.columns.length, 0);
+    sqlPopoverEl.innerHTML = `
+      <div class="sql-popover-header">
+        <strong>${escapeHtml(sqlContextMode === "document" ? currentSqlSource()?.name ?? "Colunas" : "Colunas")}</strong>
+        <span>${formatNumber(totalColumns)}</span>
+      </div>
+      <input id="sql-column-search" class="sql-popover-search" placeholder="${sqlContextMode === "document" ? "Buscar coluna" : "Buscar documento ou coluna"}" value="${escapeHtml(sqlColumnSearch)}" />
+      <div class="sql-popover-list">
+        ${
+          totalColumns > 0
+            ? sources
+                .map((source) =>
+                  sqlContextMode === "workspace"
+                    ? `
+                      <div class="sql-source-group">
+                        <button class="sql-popover-item sql-source-name" type="button" data-insert-source="${escapeHtml(source.name)}" title="${escapeHtml(source.name)}">
+                          <span>${escapeHtml(source.name)}</span>
+                          <small>${formatNumber(source.columns.length)} colunas</small>
+                        </button>
+                        ${source.columns
+                          .map(
+                            (column) => `
+                              <button class="sql-popover-item nested" type="button" data-insert-column="${escapeHtml(column)}" title="${escapeHtml(column)}&#10;${escapeHtml(source.column_types[column]?.toUpperCase() ?? "VARCHAR")}">
+                                <span>${escapeHtml(column)}</span>
+                                <small>${escapeHtml(source.column_types[column]?.toUpperCase() ?? "VARCHAR")}</small>
+                              </button>
+                            `,
+                          )
+                          .join("")}
+                      </div>
+                    `
+                    : source.columns
+                        .map(
+                          (column) => `
+                            <button class="sql-popover-item" type="button" data-insert-column="${escapeHtml(column)}" title="${escapeHtml(column)}&#10;${escapeHtml(source.column_types[column]?.toUpperCase() ?? activeSqlColumnType(column))}">
+                              <span>${escapeHtml(column)}</span>
+                              <small>${escapeHtml(source.column_types[column]?.toUpperCase() ?? activeSqlColumnType(column))}</small>
+                            </button>
+                          `,
+                        )
+                        .join(""),
+                )
+                .join("")
+            : '<p class="sql-popover-empty">Nenhuma coluna encontrada.</p>'
+        }
+      </div>
+    `;
+    placeSqlFloatingPanel(sqlPopoverEl, sqlColumnsButton);
+  } else if (sqlPopoverMode === "history") {
+    sqlPopoverEl.innerHTML = `
+      <div class="sql-popover-header"><strong>Historico</strong><span>${formatNumber(sqlHistory.length)}</span></div>
+      <div class="sql-popover-list">
+        ${
+          sqlHistory.length
+            ? sqlHistory
+                .map(
+                  (entry) => `
+                    <button class="sql-popover-item stacked" type="button" data-load-history="${escapeHtml(entry.id)}">
+                      <span>${escapeHtml(formatSqlHistoryTime(entry.executedAt))}</span>
+                      <code>${escapeHtml(compactSql(entry.query))}</code>
+                      <small>${entry.error ? "Erro" : `${formatNumber(entry.rowCount ?? 0)} linhas${entry.durationMs !== null ? ` - ${formatDuration(entry.durationMs)}` : ""}`}</small>
+                    </button>
+                  `,
+                )
+                .join("")
+            : '<p class="sql-popover-empty">Nenhuma consulta executada.</p>'
+        }
+      </div>
+    `;
+    placeSqlFloatingPanel(sqlPopoverEl, sqlHistoryButton);
+  } else if (sqlPopoverMode === "saved") {
+    sqlPopoverEl.innerHTML = `
+      <div class="sql-popover-header">
+        <strong>Salvas</strong>
+        <button class="ghost-button compact-button" type="button" data-save-current-query>Salvar consulta</button>
+      </div>
+      <div class="sql-popover-list">
+        ${
+          savedSqlQueries.length
+            ? savedSqlQueries
+                .map(
+                  (entry) => `
+                    <button class="sql-popover-item stacked" type="button" data-load-saved="${escapeHtml(entry.id)}">
+                      <span>${escapeHtml(entry.name)}</span>
+                      <code>${escapeHtml(compactSql(entry.query))}</code>
+                    </button>
+                  `,
+                )
+                .join("")
+            : '<p class="sql-popover-empty">Nenhuma consulta salva.</p>'
+        }
+      </div>
+    `;
+    placeSqlFloatingPanel(sqlPopoverEl, sqlSavedButton);
+  } else {
+    sqlPopoverEl.innerHTML = `
+      <div class="sql-popover-list compact">
+        <button class="sql-popover-item" type="button" data-sql-menu-action="format">Formatar SQL</button>
+        <button class="sql-popover-item" type="button" data-sql-menu-action="save">Salvar consulta</button>
+        <button class="sql-popover-item" type="button" data-sql-menu-action="copy">Copiar SQL</button>
+      </div>
+    `;
+    placeSqlFloatingPanel(sqlPopoverEl, sqlMenuButton);
+  }
+
+  sqlPopoverEl.classList.remove("hidden");
+  sqlPopoverEl.querySelector<HTMLInputElement>("#sql-column-search")?.focus();
+}
+
+function toggleSqlPopover(mode: typeof sqlPopoverMode) {
+  if (sqlPopoverMode === mode) {
+    closeSqlPopover();
+    return;
+  }
+
+  sqlPopoverMode = mode;
+  renderSqlPopover();
+}
+
+function formatSqlHistoryTime(value: number) {
+  return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+function compactSql(query: string) {
+  return query.replace(/\s+/g, " ").trim().slice(0, 140);
+}
+
+function recordSqlHistory(query: string, page: TablePage | null, durationMs: number | null, error: string | null) {
+  sqlHistory = [
+    {
+      id: `sql_${Date.now()}`,
+      query,
+      contextMode: sqlContextMode,
+      documentId: sqlContextMode === "document" ? currentDocumentId : null,
+      workspaceId: currentWorkspaceId,
+      executedAt: Date.now(),
+      rowCount: page?.total_rows ?? null,
+      durationMs,
+      error,
+    },
+    ...sqlHistory.filter((entry) => entry.query !== query),
+  ].slice(0, SQL_HISTORY_LIMIT);
+  writeSqlHistory();
+}
+
+function restoreSqlEntryContext(entry: Pick<SqlHistoryEntry, "contextMode" | "documentId" | "workspaceId">) {
+  if (entry.contextMode === "document" || entry.contextMode === "workspace") {
+    sqlContextMode = entry.contextMode;
+  }
+
+  if (entry.contextMode === "document" && entry.documentId && documents.some((document) => document.id === entry.documentId)) {
+    currentDocumentId = entry.documentId;
+    renderDocuments();
+  }
+
+  renderSqlContext();
+  refreshSqlSources().catch((error) => setStatus(String(error)));
+}
+
+function friendlySqlError(error: unknown): SqlFriendlyError {
+  const technical = String(error);
+  const candidateMatch = technical.match(/Candidate bindings:\s*([\s\S]+)/i);
+  const firstCandidate = candidateMatch?.[1]?.match(/"([^"]+)"/)?.[1];
+  const missingMatch = technical.match(/Referenced column "([^"]+)"/i);
+
+  if (missingMatch) {
+    const missing = missingMatch[1];
+    return {
+      title: "Coluna nao encontrada",
+      message: `"${missing}" nao existe neste documento.`,
+      suggestion: firstCandidate ? `"${firstCandidate}"` : nearestSqlColumn(missing),
+      technical,
+    };
+  }
+
+  return {
+    title: "Nao foi possivel executar a consulta",
+    message: "Revise a sintaxe SQL e os nomes de tabela ou coluna.",
+    technical,
+  };
+}
+
+function nearestSqlColumn(value: string) {
+  const normalized = normalizeSqlText(value);
+  return (
+    activeSqlColumns()
+      .map((column) => ({ column, distance: levenshtein(normalizeSqlText(column), normalized) }))
+      .sort((left, right) => left.distance - right.distance)[0]?.column ?? null
+  );
+}
+
+function normalizeSqlText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_\s]+/g, "")
+    .toLowerCase();
+}
+
+function levenshtein(left: string, right: string) {
+  const dp = Array.from({ length: left.length + 1 }, (_row, index) => [index]);
+  for (let column = 1; column <= right.length; column += 1) dp[0][column] = column;
+  for (let row = 1; row <= left.length; row += 1) {
+    for (let column = 1; column <= right.length; column += 1) {
+      dp[row][column] =
+        left[row - 1] === right[column - 1]
+          ? dp[row - 1][column - 1]
+          : Math.min(dp[row - 1][column - 1], dp[row][column - 1], dp[row - 1][column]) + 1;
+    }
+  }
+  return dp[left.length][right.length];
+}
+
+function renderSqlError(error: SqlFriendlyError | null) {
+  lastSqlFriendlyError = error;
+
+  if (!sqlErrorEl || !error) {
+    sqlErrorEl?.classList.add("hidden");
+    if (sqlErrorEl) sqlErrorEl.innerHTML = "";
+    return;
+  }
+
+  sqlErrorEl.innerHTML = `
+    <div>
+      <strong>${escapeHtml(error.title)}</strong>
+      <p>${escapeHtml(error.message)}</p>
+      ${error.suggestion ? `<p>Voce quis dizer ${escapeHtml(error.suggestion)}?</p>` : ""}
+    </div>
+    <div class="sql-error-actions">
+      ${error.suggestion ? '<button class="ghost-button compact-button" type="button" data-sql-fix>Substituir</button>' : ""}
+      <details>
+        <summary>Ver detalhes</summary>
+        <pre>${escapeHtml(error.technical)}</pre>
+      </details>
+    </div>
+  `;
+  sqlErrorEl.classList.remove("hidden");
+}
+
+function applySqlErrorFix() {
+  if (!sqlQueryEl || !lastSqlFriendlyError?.suggestion) return;
+  const missingMatch = lastSqlFriendlyError.technical.match(/Referenced column "([^"]+)"/i);
+  const missing = missingMatch?.[1];
+  const suggestion = lastSqlFriendlyError.suggestion;
+
+  if (!missing) return;
+
+  const escapedMissing = missing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  sqlQueryEl.value = sqlQueryEl.value.replace(new RegExp(`"${escapedMissing}"|\\b${escapedMissing}\\b`, "g"), suggestion);
+  syncSqlHighlight();
+  renderSqlError(null);
+  sqlQueryEl.focus();
+}
+
+function formatSqlQuery() {
+  if (!sqlQueryEl) return;
+  const formatted = sqlQueryEl.value
+    .replace(/\s+/g, " ")
+    .replace(/\b(FROM|WHERE|GROUP BY|ORDER BY|HAVING|LIMIT|OFFSET)\b/gi, "\n$1")
+    .replace(/\b(AND|OR)\b/gi, "\n  $1")
+    .trim();
+  setSqlEditorValue(formatted);
+}
+
+function openSqlSaveModal(mode: "query" | "result") {
+  if (!sqlSaveModalEl || !sqlSaveNameEl || !sqlSaveTitleEl || !sqlSaveEyebrowEl || !sqlSaveNameLabelEl) return;
+  sqlSaveMode = mode;
+  sqlSaveEyebrowEl.textContent = mode === "query" ? "Consulta SQL" : "Resultado SQL";
+  sqlSaveTitleEl.textContent = mode === "query" ? "Salvar consulta" : "Salvar resultado";
+  sqlSaveNameLabelEl.textContent = "Nome";
+  sqlSaveNameEl.value = "";
+  sqlSaveErrorEl?.classList.add("hidden");
+  sqlSaveModalEl.classList.remove("hidden");
+  sqlSaveNameEl.focus();
+}
+
+function closeSqlSaveModal() {
+  sqlSaveMode = null;
+  sqlSaveModalEl?.classList.add("hidden");
+  if (sqlSaveErrorEl) {
+    sqlSaveErrorEl.textContent = "";
+    sqlSaveErrorEl.classList.add("hidden");
+  }
 }
 
 function formatNumber(value: number) {
@@ -2007,6 +2840,8 @@ async function saveRename() {
     }
 
     renderDocuments();
+    renderSqlContext();
+    refreshSqlSources().catch((error) => setStatus(String(error)));
     renderSummary(currentSummary, currentPage);
     closeRename();
     setStatus("Documento renomeado.");
@@ -2876,6 +3711,7 @@ function renderWorkspaces() {
       `,
     )
     .join("");
+  renderSqlContext();
 }
 
 function renderProfiling() {
@@ -3598,6 +4434,7 @@ async function loadWindow(offset: number, requestSeq: number, signature: string)
       dataMode === "sql"
         ? await invoke<TablePage>("get_sql_window", {
             query: currentSqlQuery,
+            ...sqlContextPayload(),
             offset,
             limit: GRID_BATCH_SIZE,
             filters: activeFilters(),
@@ -4095,7 +4932,7 @@ async function importFile(
     await loadPage(0);
     setStatus("Importacao concluida.");
   } catch (error) {
-    setStatus(String(error));
+    setStatus(formatImportErrorMessage(error));
     throw error;
   } finally {
     hideLoading();
@@ -4138,6 +4975,8 @@ async function refreshDocuments() {
   }
 
   renderDocuments();
+  renderSqlContext();
+  refreshSqlSources().catch((error) => setStatus(String(error)));
 }
 
 async function selectWorkspace(workspaceId: string) {
@@ -4164,6 +5003,7 @@ async function selectWorkspace(workspaceId: string) {
   renderQuality(null);
   renderTable(null);
   renderWorkspaces();
+  renderSqlContext();
   await refreshDocuments();
 
   if (currentDocumentId) {
@@ -4243,6 +5083,8 @@ async function selectDocument(documentId: string) {
   sortDirection = null;
   closeProfilingDrawer();
   renderDocuments();
+  renderSqlContext();
+  refreshSqlSources().catch((error) => setStatus(String(error)));
   await loadPage(0);
 }
 
@@ -4553,9 +5395,25 @@ document.addEventListener("click", (event) => {
       setOpenColumnMenu(null);
     }
   }
+
+  if (sqlPopoverMode) {
+    if (!target.closest("#sql-popover") && !target.closest(".sql-toolbar")) {
+      closeSqlPopover();
+    }
+  }
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && sqlPopoverMode) {
+    closeSqlPopover();
+    return;
+  }
+
+  if (event.key === "Escape" && !sqlSaveModalEl?.classList.contains("hidden")) {
+    closeSqlSaveModal();
+    return;
+  }
+
   if (event.key === "Escape" && activePopoverMode) {
     hideCellPopover();
     return;
@@ -4778,7 +5636,7 @@ closeGridDetailsButton?.addEventListener("click", () => {
   setGridDetailsVisible(false);
 });
 
-runSqlButton?.addEventListener("click", async () => {
+async function runCurrentSql() {
   if (!sqlQueryEl || !sqlStatusEl) {
     return;
   }
@@ -4788,12 +5646,21 @@ runSqlButton?.addEventListener("click", async () => {
     return;
   }
 
-  runSqlButton.disabled = true;
+  if (runSqlButton) {
+    runSqlButton.disabled = true;
+    runSqlButton.textContent = "Executando...";
+  }
   sqlStatusEl.textContent = "Executando consulta na grid principal...";
+  renderSqlError(null);
+  closeSqlPopover();
+  lastSqlExecutionMs = null;
+  if (saveSqlResultButton) saveSqlResultButton.classList.add("hidden");
+  const query = sqlQueryEl.value;
+  const startedAt = performance.now();
 
   try {
     dataMode = "sql";
-    currentSqlQuery = sqlQueryEl.value;
+    currentSqlQuery = query;
     currentSummary = null;
     currentPage = null;
     currentOffset = 0;
@@ -4801,12 +5668,28 @@ runSqlButton?.addEventListener("click", async () => {
     sortColumn = null;
     sortDirection = null;
     await loadPage(0);
-    sqlStatusEl.textContent = "Resultado exibido na grid principal.";
+    lastSqlExecutionMs = Math.round(performance.now() - startedAt);
+    const resultPage = currentPage as TablePage | null;
+    const totalRows = resultPage?.total_rows ?? 0;
+    const limit = resultPage?.limit ?? 500;
+    const limited = totalRows > limit ? ` - exibindo primeiras ${formatNumber(limit)}` : "";
+    sqlStatusEl.textContent = `${formatNumber(totalRows)} linhas encontradas${limited} - ${formatDuration(lastSqlExecutionMs)}.`;
+    if (saveSqlResultButton) saveSqlResultButton.classList.remove("hidden");
+    recordSqlHistory(query, currentPage, lastSqlExecutionMs, null);
   } catch (error) {
-    sqlStatusEl.textContent = String(error);
+    sqlStatusEl.textContent = "Consulta nao executada.";
+    renderSqlError(friendlySqlError(error));
+    recordSqlHistory(query, null, Math.round(performance.now() - startedAt), String(error));
   } finally {
-    runSqlButton.disabled = false;
+    if (runSqlButton) {
+      runSqlButton.disabled = false;
+      runSqlButton.textContent = "Executar SQL";
+    }
   }
+}
+
+runSqlButton?.addEventListener("click", () => {
+  runCurrentSql().catch((error) => setStatus(String(error)));
 });
 
 clearSqlButton?.addEventListener("click", async () => {
@@ -4822,14 +5705,217 @@ clearSqlButton?.addEventListener("click", async () => {
   sortColumn = null;
   sortDirection = null;
   if (sqlStatusEl) sqlStatusEl.textContent = "Resultado SQL limpo.";
+  if (saveSqlResultButton) saveSqlResultButton.classList.add("hidden");
+  renderSqlError(null);
   await loadPage(0);
 });
 
-sqlQueryEl?.addEventListener("input", syncSqlHighlight);
+sqlQueryEl?.addEventListener("input", () => {
+  syncSqlHighlight();
+  updateSqlAutocomplete();
+});
 sqlQueryEl?.addEventListener("scroll", () => {
   if (!sqlQueryEl || !sqlHighlightEl) return;
   sqlHighlightEl.scrollTop = sqlQueryEl.scrollTop;
   sqlHighlightEl.scrollLeft = sqlQueryEl.scrollLeft;
+});
+sqlQueryEl?.addEventListener("focus", updateSqlAutocomplete);
+sqlQueryEl?.addEventListener("click", updateSqlAutocomplete);
+sqlQueryEl?.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    runCurrentSql().catch((error) => setStatus(String(error)));
+    return;
+  }
+
+  if (!sqlAutocompleteOpen) return;
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    sqlAutocompleteIndex = (sqlAutocompleteIndex + 1) % sqlAutocompleteItems.length;
+    renderSqlAutocomplete();
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    sqlAutocompleteIndex = (sqlAutocompleteIndex - 1 + sqlAutocompleteItems.length) % sqlAutocompleteItems.length;
+    renderSqlAutocomplete();
+  } else if (event.key === "Enter" || event.key === "Tab") {
+    event.preventDefault();
+    applySqlSuggestion();
+  } else if (event.key === "Escape") {
+    sqlAutocompleteOpen = false;
+    renderSqlAutocomplete();
+  }
+});
+
+sqlContextModeEl?.addEventListener("change", () => {
+  sqlContextMode = sqlContextModeEl.value === "workspace" ? "workspace" : "document";
+  closeSqlPopover();
+  sqlAutocompleteOpen = false;
+  renderSqlContext();
+  refreshSqlSources().catch((error) => setStatus(String(error)));
+});
+
+sqlAutocompleteEl?.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-sql-suggestion]");
+  if (!button) return;
+  applySqlSuggestion(Number(button.dataset.sqlSuggestion));
+});
+
+sqlColumnsButton?.addEventListener("click", () => toggleSqlPopover("columns"));
+sqlHistoryButton?.addEventListener("click", () => toggleSqlPopover("history"));
+sqlSavedButton?.addEventListener("click", () => toggleSqlPopover("saved"));
+sqlMenuButton?.addEventListener("click", () => toggleSqlPopover("menu"));
+
+sqlPopoverEl?.addEventListener("input", (event) => {
+  const input = (event.target as HTMLElement).closest<HTMLInputElement>("#sql-column-search");
+  if (!input) return;
+  sqlColumnSearch = input.value;
+  renderSqlPopover();
+});
+
+sqlPopoverEl?.addEventListener("click", async (event) => {
+  const target = event.target as HTMLElement;
+  const columnButton = target.closest<HTMLButtonElement>("[data-insert-column]");
+  const sourceButton = target.closest<HTMLButtonElement>("[data-insert-source]");
+  const historyButton = target.closest<HTMLButtonElement>("[data-load-history]");
+  const savedButton = target.closest<HTMLButtonElement>("[data-load-saved]");
+  const saveCurrentButton = target.closest<HTMLButtonElement>("[data-save-current-query]");
+  const menuButton = target.closest<HTMLButtonElement>("[data-sql-menu-action]");
+
+  if (columnButton) {
+    insertSqlText(sqlIdentifier(columnButton.dataset.insertColumn ?? ""), null);
+    return;
+  }
+
+  if (sourceButton) {
+    insertSqlText(sqlIdentifier(sourceButton.dataset.insertSource ?? ""), null);
+    return;
+  }
+
+  if (historyButton) {
+    const entry = sqlHistory.find((item) => item.id === historyButton.dataset.loadHistory);
+    if (entry) {
+      restoreSqlEntryContext(entry);
+      setSqlEditorValue(entry.query);
+    }
+    closeSqlPopover();
+    return;
+  }
+
+  if (savedButton) {
+    const entry = savedSqlQueries.find((item) => item.id === savedButton.dataset.loadSaved);
+    if (entry) {
+      restoreSqlEntryContext(entry);
+      setSqlEditorValue(entry.query);
+    }
+    closeSqlPopover();
+    return;
+  }
+
+  if (saveCurrentButton) {
+    openSqlSaveModal("query");
+    return;
+  }
+
+  if (menuButton) {
+    const action = menuButton.dataset.sqlMenuAction;
+    if (action === "format") {
+      formatSqlQuery();
+    } else if (action === "save") {
+      openSqlSaveModal("query");
+    } else if (action === "copy" && sqlQueryEl) {
+      await navigator.clipboard?.writeText(sqlQueryEl.value);
+      if (sqlStatusEl) sqlStatusEl.textContent = "SQL copiado.";
+    }
+    closeSqlPopover();
+  }
+});
+
+sqlErrorEl?.addEventListener("click", (event) => {
+  if ((event.target as HTMLElement).closest("[data-sql-fix]")) {
+    applySqlErrorFix();
+  }
+});
+
+saveSqlResultButton?.addEventListener("click", () => openSqlSaveModal("result"));
+cancelSqlSaveXButton?.addEventListener("click", closeSqlSaveModal);
+cancelSqlSaveButton?.addEventListener("click", closeSqlSaveModal);
+sqlSaveModalEl?.addEventListener("click", (event) => {
+  if (event.target === sqlSaveModalEl) {
+    closeSqlSaveModal();
+  }
+});
+
+sqlSaveFormEl?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = sqlSaveNameEl?.value.trim() ?? "";
+
+  if (!sqlSaveMode || !sqlQueryEl || !name) {
+    if (sqlSaveErrorEl) {
+      sqlSaveErrorEl.textContent = "Digite um nome.";
+      sqlSaveErrorEl.classList.remove("hidden");
+    }
+    sqlSaveNameEl?.focus();
+    return;
+  }
+
+  if (confirmSqlSaveButton) confirmSqlSaveButton.disabled = true;
+  if (sqlSaveErrorEl) sqlSaveErrorEl.classList.add("hidden");
+
+  try {
+    if (sqlSaveMode === "query") {
+      savedSqlQueries = [
+        {
+          id: `saved_sql_${Date.now()}`,
+          name,
+          query: sqlQueryEl.value,
+          contextMode: sqlContextMode,
+          documentId: sqlContextMode === "document" ? currentDocumentId : null,
+          workspaceId: currentWorkspaceId,
+          savedAt: Date.now(),
+        },
+        ...savedSqlQueries.filter((entry) => entry.name !== name),
+      ];
+      writeSavedSqlQueries();
+      if (sqlStatusEl) sqlStatusEl.textContent = "Consulta salva.";
+      closeSqlSaveModal();
+      if (sqlPopoverMode === "saved") renderSqlPopover();
+      return;
+    }
+
+    const savedDocument = await invoke<DocumentInfo>("save_sql_result_document", {
+      query: currentSqlQuery ?? sqlQueryEl.value,
+      name,
+      contextMode: sqlContextMode,
+      workspaceId: currentWorkspaceId,
+      sourceDocumentId: sqlContextMode === "document" ? currentDocumentId : null,
+    });
+    documents = [savedDocument, ...documents.filter((document) => document.id !== savedDocument.id)];
+    currentDocumentId = savedDocument.id;
+    dataMode = "document";
+    currentSqlQuery = null;
+    currentSummary = null;
+    currentPage = null;
+    filterValues = new Map();
+    sortColumn = null;
+    sortDirection = null;
+    if (saveSqlResultButton) saveSqlResultButton.classList.add("hidden");
+    closeSqlSaveModal();
+    renderDocuments();
+    renderSqlContext();
+    refreshSqlSources().catch((error) => setStatus(String(error)));
+    await loadPage(0);
+    setStatus("Resultado SQL salvo como documento.");
+    if (sqlStatusEl) sqlStatusEl.textContent = "Resultado salvo como documento.";
+  } catch (error) {
+    if (sqlSaveErrorEl) {
+      sqlSaveErrorEl.textContent = String(error);
+      sqlSaveErrorEl.classList.remove("hidden");
+    }
+  } finally {
+    if (confirmSqlSaveButton) confirmSqlSaveButton.disabled = false;
+  }
 });
 
 tableHeadEl?.addEventListener("click", async (event) => {

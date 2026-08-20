@@ -28,6 +28,7 @@ mod quality;
 mod transformations;
 
 const DOCUMENTS_TABLE: &str = "imported_documents";
+const SQL_LINEAGE_TABLE: &str = "sql_result_lineage";
 const WORKSPACES_TABLE: &str = "workspaces";
 const VALTRON_ROW_ID_COLUMN: &str = "_valtron_row_id";
 const DUCKDB_ROW_ID_ALIAS: &str = "__valtron_duckdb_rowid";
@@ -419,6 +420,13 @@ struct ExcelSheetMetadata {
 }
 
 #[derive(Clone, Debug)]
+struct WorkbookRelationship {
+    id: String,
+    relationship_type: String,
+    target: String,
+}
+
+#[derive(Clone, Debug)]
 struct HeaderDetection {
     header_row: u32,
     column_count: usize,
@@ -456,6 +464,23 @@ struct DocumentInfo {
     imported_at: String,
     import_duration_ms: Option<u128>,
     import_performance: Option<ImportPerformanceSnapshot>,
+}
+
+#[derive(Clone)]
+struct DocumentRecord {
+    id: String,
+    workspace_id: String,
+    file_name: String,
+    table_name: String,
+}
+
+#[derive(Serialize)]
+struct SqlSourceInfo {
+    id: String,
+    name: String,
+    table_name: String,
+    columns: Vec<String>,
+    column_types: HashMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -683,6 +708,22 @@ fn init_database(connection: &Connection) -> Result<(), String> {
         )
         .map_err(|error| format!("Nao foi possivel inicializar os documentos: {error}"))?;
 
+    connection
+        .execute(
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {} (
+                    id TEXT PRIMARY KEY,
+                    source_document_id TEXT,
+                    result_document_id TEXT NOT NULL,
+                    sql TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )",
+                quoted_identifier(SQL_LINEAGE_TABLE)
+            ),
+            [],
+        )
+        .map_err(|error| format!("Nao foi possivel inicializar lineage SQL: {error}"))?;
+
     ensure_document_workspace_column(connection)?;
     ensure_document_import_duration_column(connection)?;
     ensure_document_import_performance_column(connection)?;
@@ -894,6 +935,39 @@ fn temp_import_path(app: &AppHandle, document_id: &str) -> Result<PathBuf, Strin
         .map_err(|error| format!("Nao foi possivel criar a pasta temporaria: {error}"))?;
 
     Ok(dir.join(format!("{document_id}.csv")))
+}
+
+fn temp_xlsx_compatibility_path(app: &AppHandle, document_id: &str) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Nao foi possivel localizar a pasta temporaria: {error}"))?
+        .join("imports");
+
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Nao foi possivel criar a pasta temporaria: {error}"))?;
+
+    Ok(dir.join(format!("{document_id}_relationships.xlsx")))
+}
+
+struct TempFileGuard {
+    path: PathBuf,
+}
+
+impl TempFileGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        fs::remove_file(&self.path).ok();
+    }
 }
 
 fn write_csv_record(writer: &mut BufWriter<fs::File>, values: &[String]) -> Result<(), String> {
@@ -1150,6 +1224,12 @@ fn try_import_xlsx_with_duckdb_excel(
     Ok(())
 }
 
+fn is_duckdb_xlsx_relationship_id_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("no sheets found in xlsx file")
+        && normalized.contains("is the file corrupt")
+}
+
 fn try_import_xlsx_direct_without_preopen(
     connection: &Connection,
     file_path: &PathBuf,
@@ -1189,6 +1269,62 @@ fn try_import_xlsx_direct_without_preopen(
     })?;
 
     Ok(())
+}
+
+fn try_import_xlsx_direct_with_relationship_fallback(
+    connection: &Connection,
+    file_path: &PathBuf,
+    table_name: &str,
+    sheet_name: Option<&str>,
+    range: Option<&str>,
+    temp_path: &PathBuf,
+) -> Result<(), String> {
+    eprintln!("[xlsx-import] tentando read_xlsx no arquivo original");
+    match try_import_xlsx_direct_without_preopen(
+        connection, file_path, table_name, sheet_name, range,
+    ) {
+        Ok(()) => {
+            eprintln!("[xlsx-import] importacao xlsx concluida no arquivo original");
+            Ok(())
+        }
+        Err(original_error) => {
+            eprintln!("[xlsx-import] read_xlsx falhou no arquivo original: {original_error}");
+
+            if !is_duckdb_xlsx_relationship_id_error(&original_error) {
+                return Err(original_error);
+            }
+
+            if !xlsx_needs_relationship_id_normalization(file_path)? {
+                return Err(original_error);
+            }
+
+            eprintln!("[xlsx-import] erro identificado como incompatibilidade de relationship IDs");
+            let temp_file = TempFileGuard::new(temp_path.clone());
+            normalize_xlsx_workbook_relationship_ids(file_path, temp_file.path())?;
+            eprintln!("[xlsx-import] tentando read_xlsx novamente no arquivo temporario");
+
+            match try_import_xlsx_direct_without_preopen(
+                connection,
+                temp_file.path(),
+                table_name,
+                sheet_name,
+                range,
+            ) {
+                Ok(()) => {
+                    eprintln!("[xlsx-import] importacao xlsx concluida apos normalizacao");
+                    Ok(())
+                }
+                Err(fallback_error) => {
+                    eprintln!(
+                        "[xlsx-import] fallback tambem falhou. erro_original={original_error}; erro_fallback={fallback_error}"
+                    );
+                    Err(format!(
+                        "Nao foi possivel importar a planilha, mesmo apos aplicar o tratamento de compatibilidade XLSX.\n\nErro original: {original_error}\n\nErro apos normalizacao: {fallback_error}"
+                    ))
+                }
+            }
+        }
+    }
 }
 
 fn inspect_excel_workbook_metadata_internal(
@@ -1280,6 +1416,327 @@ fn first_xlsx_sheet_name_from_workbook_xml(file_path: &PathBuf) -> Result<Option
         .into_iter()
         .next()
         .map(|sheet| sheet.name))
+}
+
+fn parse_workbook_relationships(
+    relationships_xml: &str,
+) -> Result<Vec<WorkbookRelationship>, String> {
+    let mut reader = XmlReader::from_str(relationships_xml);
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    let mut relationships = Vec::new();
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format!("Nao foi possivel interpretar relacionamentos: {error}"))?
+        {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == b"Relationship" =>
+            {
+                let mut id = None;
+                let mut relationship_type = None;
+                let mut target = None;
+
+                for attribute in element.attributes().with_checks(false).flatten() {
+                    if attribute.key.as_ref() == b"Id" {
+                        id = attribute
+                            .decoded_and_normalized_value(XmlVersion::Explicit1_0, reader.decoder())
+                            .ok()
+                            .map(|value| value.into_owned());
+                    } else if attribute.key.as_ref() == b"Type" {
+                        relationship_type = attribute
+                            .decoded_and_normalized_value(XmlVersion::Explicit1_0, reader.decoder())
+                            .ok()
+                            .map(|value| value.into_owned());
+                    } else if attribute.key.as_ref() == b"Target" {
+                        target = attribute
+                            .decoded_and_normalized_value(XmlVersion::Explicit1_0, reader.decoder())
+                            .ok()
+                            .map(|value| value.into_owned());
+                    }
+                }
+
+                if let (Some(id), Some(relationship_type), Some(target)) =
+                    (id, relationship_type, target)
+                {
+                    relationships.push(WorkbookRelationship {
+                        id,
+                        relationship_type,
+                        target,
+                    });
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+
+        buffer.clear();
+    }
+
+    Ok(relationships)
+}
+
+fn read_xlsx_zip_text(file_path: &PathBuf, entry_name: &str) -> Result<String, String> {
+    let file = fs::File::open(file_path)
+        .map_err(|error| format!("Nao foi possivel abrir o arquivo Excel: {error}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("Arquivo Excel invalido: {error}"))?;
+    let mut content = String::new();
+    archive
+        .by_name(entry_name)
+        .map_err(|error| format!("Nao foi possivel ler {entry_name}: {error}"))?
+        .read_to_string(&mut content)
+        .map_err(|error| format!("Nao foi possivel carregar {entry_name}: {error}"))?;
+
+    Ok(content)
+}
+
+fn is_worksheet_relationship(relationship_type: &str) -> bool {
+    relationship_type.ends_with("/worksheet")
+}
+
+fn relationship_points_to_worksheet(relationship: &WorkbookRelationship) -> bool {
+    is_worksheet_relationship(&relationship.relationship_type)
+        && normalize_workbook_target(&relationship.target).starts_with("xl/worksheets/")
+}
+
+fn xlsx_needs_relationship_id_normalization(file_path: &PathBuf) -> Result<bool, String> {
+    let sheets = inspect_excel_workbook_metadata_internal(file_path)?;
+    let relationships_xml = read_xlsx_zip_text(file_path, "xl/_rels/workbook.xml.rels")?;
+    let relationships = parse_workbook_relationships(&relationships_xml)?;
+
+    for (index, sheet) in sheets.iter().enumerate() {
+        let relationship_id = sheet.relationship_id.as_deref().ok_or_else(|| {
+            format!(
+                "A planilha '{}' nao possui relacionamento interno.",
+                sheet.public.name
+            )
+        })?;
+        let relationship = relationships
+            .iter()
+            .find(|relationship| relationship.id == relationship_id)
+            .ok_or_else(|| {
+                format!(
+                    "A planilha '{}' aponta para um relacionamento inexistente.",
+                    sheet.public.name
+                )
+            })?;
+
+        if !relationship_points_to_worksheet(relationship) {
+            return Err(format!(
+                "A planilha '{}' aponta para um relacionamento que nao e worksheet.",
+                sheet.public.name
+            ));
+        }
+
+        if relationship_id != format!("rId{}", index + 1) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn next_free_relationship_id(used_ids: &HashSet<String>) -> String {
+    let mut index = 1usize;
+
+    loop {
+        let candidate = format!("rId{index}");
+
+        if !used_ids.contains(&candidate) {
+            return candidate;
+        }
+
+        index += 1;
+    }
+}
+
+fn replace_relationship_attribute(
+    xml: &mut String,
+    attribute_name: &str,
+    old_id: &str,
+    new_id: &str,
+) {
+    if old_id == new_id {
+        return;
+    }
+
+    *xml = xml.replace(
+        &format!(r#"{attribute_name}="{old_id}""#),
+        &format!(r#"{attribute_name}="{new_id}""#),
+    );
+}
+
+fn normalized_workbook_relationship_xml(
+    workbook_xml: &str,
+    relationships_xml: &str,
+    sheets: &[ExcelSheetMetadata],
+    relationships: &[WorkbookRelationship],
+) -> Result<Option<(String, String)>, String> {
+    let mut worksheet_old_ids = Vec::with_capacity(sheets.len());
+    let mut worksheet_old_id_set = HashSet::new();
+
+    for sheet in sheets {
+        let relationship_id = sheet.relationship_id.as_deref().ok_or_else(|| {
+            format!(
+                "A planilha '{}' nao possui relacionamento interno.",
+                sheet.public.name
+            )
+        })?;
+        let relationship = relationships
+            .iter()
+            .find(|relationship| relationship.id == relationship_id)
+            .ok_or_else(|| {
+                format!(
+                    "A planilha '{}' aponta para um relacionamento inexistente.",
+                    sheet.public.name
+                )
+            })?;
+
+        if !relationship_points_to_worksheet(relationship) {
+            return Err(format!(
+                "A planilha '{}' aponta para um relacionamento que nao e worksheet.",
+                sheet.public.name
+            ));
+        }
+
+        worksheet_old_id_set.insert(relationship_id.to_string());
+        worksheet_old_ids.push(relationship_id.to_string());
+    }
+
+    let reserved_worksheet_ids = (1..=worksheet_old_ids.len())
+        .map(|index| format!("rId{index}"))
+        .collect::<HashSet<_>>();
+    let mut id_mapping = HashMap::new();
+    let mut used_ids = HashSet::new();
+
+    for (index, old_id) in worksheet_old_ids.iter().enumerate() {
+        let new_id = format!("rId{}", index + 1);
+        id_mapping.insert(old_id.clone(), new_id.clone());
+        used_ids.insert(new_id);
+    }
+
+    for relationship in relationships {
+        if worksheet_old_id_set.contains(&relationship.id) {
+            continue;
+        }
+
+        let new_id = if reserved_worksheet_ids.contains(&relationship.id)
+            || used_ids.contains(&relationship.id)
+        {
+            next_free_relationship_id(&used_ids)
+        } else {
+            relationship.id.clone()
+        };
+
+        used_ids.insert(new_id.clone());
+        id_mapping.insert(relationship.id.clone(), new_id);
+    }
+
+    if id_mapping.iter().all(|(old_id, new_id)| old_id == new_id) {
+        return Ok(None);
+    }
+
+    let mut normalized_workbook_xml = workbook_xml.to_string();
+    let mut normalized_relationships_xml = relationships_xml.to_string();
+
+    for old_id in &worksheet_old_ids {
+        let new_id = id_mapping
+            .get(old_id)
+            .ok_or_else(|| "Mapeamento de relationship incompleto.".to_string())?;
+        replace_relationship_attribute(&mut normalized_workbook_xml, "r:id", old_id, new_id);
+    }
+
+    for relationship in relationships {
+        let new_id = id_mapping
+            .get(&relationship.id)
+            .ok_or_else(|| "Mapeamento de relationship incompleto.".to_string())?;
+        replace_relationship_attribute(
+            &mut normalized_relationships_xml,
+            "Id",
+            &relationship.id,
+            new_id,
+        );
+    }
+
+    Ok(Some((
+        normalized_workbook_xml,
+        normalized_relationships_xml,
+    )))
+}
+
+fn normalize_xlsx_workbook_relationship_ids(
+    source_path: &PathBuf,
+    destination_path: &PathBuf,
+) -> Result<(), String> {
+    eprintln!("[xlsx-import] criando copia temporaria com relationships normalizados");
+    let workbook_xml = read_xlsx_zip_text(source_path, "xl/workbook.xml")?;
+    let relationships_xml = read_xlsx_zip_text(source_path, "xl/_rels/workbook.xml.rels")?;
+    let sheets = inspect_excel_workbook_metadata_internal(source_path)?;
+    let relationships = parse_workbook_relationships(&relationships_xml)?;
+    let (normalized_workbook_xml, normalized_relationships_xml) =
+        normalized_workbook_relationship_xml(
+            &workbook_xml,
+            &relationships_xml,
+            &sheets,
+            &relationships,
+        )?
+        .ok_or_else(|| "Nenhuma normalizacao de relationship ID era aplicavel.".to_string())?;
+
+    let source_file = fs::File::open(source_path)
+        .map_err(|error| format!("Nao foi possivel abrir o XLSX original: {error}"))?;
+    let mut source_archive =
+        ZipArchive::new(source_file).map_err(|error| format!("Arquivo Excel invalido: {error}"))?;
+    let destination_file = fs::File::create(destination_path)
+        .map_err(|error| format!("Nao foi possivel criar o XLSX temporario: {error}"))?;
+    let mut destination_archive = ZipWriter::new(destination_file);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    for index in 0..source_archive.len() {
+        let mut source_entry = source_archive
+            .by_index(index)
+            .map_err(|error| format!("Nao foi possivel ler entrada do XLSX: {error}"))?;
+        let entry_name = source_entry.name().to_string();
+
+        if source_entry.is_dir() {
+            destination_archive
+                .add_directory(&entry_name, options)
+                .map_err(|error| {
+                    format!("Nao foi possivel gravar diretorio no XLSX temporario: {error}")
+                })?;
+            continue;
+        }
+
+        destination_archive
+            .start_file(&entry_name, options)
+            .map_err(|error| {
+                format!("Nao foi possivel gravar entrada no XLSX temporario: {error}")
+            })?;
+
+        if entry_name == "xl/workbook.xml" {
+            destination_archive
+                .write_all(normalized_workbook_xml.as_bytes())
+                .map_err(|error| {
+                    format!("Nao foi possivel gravar workbook normalizado: {error}")
+                })?;
+        } else if entry_name == "xl/_rels/workbook.xml.rels" {
+            destination_archive
+                .write_all(normalized_relationships_xml.as_bytes())
+                .map_err(|error| {
+                    format!("Nao foi possivel gravar relationships normalizados: {error}")
+                })?;
+        } else {
+            std::io::copy(&mut source_entry, &mut destination_archive)
+                .map_err(|error| format!("Nao foi possivel copiar entrada do XLSX: {error}"))?;
+        }
+    }
+
+    destination_archive
+        .finish()
+        .map_err(|error| format!("Nao foi possivel finalizar o XLSX temporario: {error}"))?;
+
+    Ok(())
 }
 
 fn normalize_workbook_target(target: &str) -> String {
@@ -2009,6 +2466,43 @@ fn update_document_import_performance(
     Ok(())
 }
 
+fn ensure_unique_document_name(
+    connection: &Connection,
+    workspace_id: &str,
+    document_name: &str,
+    excluding_document_id: Option<&str>,
+) -> Result<(), String> {
+    let count = match excluding_document_id {
+        Some(document_id) => connection.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM {}
+                 WHERE workspace_id = ? AND lower(file_name) = lower(?) AND id <> ?",
+                quoted_identifier(DOCUMENTS_TABLE)
+            ),
+            params![workspace_id, document_name, document_id],
+            |row| row.get::<_, i64>(0),
+        ),
+        None => connection.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM {}
+                 WHERE workspace_id = ? AND lower(file_name) = lower(?)",
+                quoted_identifier(DOCUMENTS_TABLE)
+            ),
+            params![workspace_id, document_name],
+            |row| row.get::<_, i64>(0),
+        ),
+    }
+    .map_err(|error| format!("Nao foi possivel validar o nome do documento: {error}"))?;
+
+    if count > 0 {
+        return Err(format!(
+            "Ja existe um documento chamado \"{document_name}\" neste workspace."
+        ));
+    }
+
+    Ok(())
+}
+
 fn get_document_table(connection: &Connection, document_id: &str) -> Result<String, String> {
     connection
         .query_row(
@@ -2020,6 +2514,165 @@ fn get_document_table(connection: &Connection, document_id: &str) -> Result<Stri
             |row| row.get::<_, String>(0),
         )
         .map_err(|error| format!("Documento nao encontrado: {error}"))
+}
+
+fn get_document_record(
+    connection: &Connection,
+    document_id: &str,
+) -> Result<DocumentRecord, String> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT id, workspace_id, file_name, table_name FROM {} WHERE id = ?",
+                quoted_identifier(DOCUMENTS_TABLE)
+            ),
+            params![document_id],
+            |row| {
+                Ok(DocumentRecord {
+                    id: row.get(0)?,
+                    workspace_id: row.get(1)?,
+                    file_name: row.get(2)?,
+                    table_name: row.get(3)?,
+                })
+            },
+        )
+        .map_err(|error| format!("Documento nao encontrado: {error}"))
+}
+
+fn list_document_records(
+    connection: &Connection,
+    workspace_id: &str,
+) -> Result<Vec<DocumentRecord>, String> {
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT id, workspace_id, file_name, table_name
+             FROM {}
+             WHERE workspace_id = ?
+             ORDER BY CAST(imported_at AS BIGINT) DESC",
+            quoted_identifier(DOCUMENTS_TABLE)
+        ))
+        .map_err(|error| format!("Nao foi possivel listar fontes SQL: {error}"))?;
+
+    statement
+        .query_map(params![workspace_id], |row| {
+            Ok(DocumentRecord {
+                id: row.get(0)?,
+                workspace_id: row.get(1)?,
+                file_name: row.get(2)?,
+                table_name: row.get(3)?,
+            })
+        })
+        .map_err(|error| format!("Nao foi possivel consultar fontes SQL: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Nao foi possivel processar fontes SQL: {error}"))
+}
+
+fn create_logical_document_view(
+    connection: &Connection,
+    logical_name: &str,
+    physical_table_name: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            &format!(
+                "CREATE OR REPLACE TEMP VIEW {} AS SELECT * FROM {}",
+                quoted_identifier(logical_name),
+                table_sql(physical_table_name)
+            ),
+            [],
+        )
+        .map_err(|error| {
+            format!("Nao foi possivel preparar a fonte logica \"{logical_name}\": {error}")
+        })?;
+
+    Ok(())
+}
+
+fn ensure_unambiguous_logical_names(documents: &[DocumentRecord]) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    let mut duplicate_names = Vec::new();
+
+    for document in documents {
+        let normalized = document.file_name.trim().to_lowercase();
+        if !seen.insert(normalized) {
+            duplicate_names.push(document.file_name.clone());
+        }
+    }
+
+    duplicate_names.sort();
+    duplicate_names.dedup();
+
+    if !duplicate_names.is_empty() {
+        return Err(format!(
+            "Existem documentos com nome duplicado neste workspace: {}. Renomeie para usar nomes logicos no SQL.",
+            duplicate_names.join(", ")
+        ));
+    }
+
+    Ok(())
+}
+
+fn prepare_sql_context(
+    connection: &Connection,
+    context_mode: &str,
+    workspace_id: Option<String>,
+    document_id: Option<String>,
+) -> Result<Option<String>, String> {
+    match context_mode {
+        "document" => {
+            let document_id = document_id
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    "Selecione um documento para usar o contexto Documento atual.".to_string()
+                })?;
+            let document = get_document_record(connection, &document_id)?;
+
+            if let Some(workspace_id) = workspace_id.as_deref() {
+                if document.workspace_id != workspace_or_default(Some(workspace_id.to_string())) {
+                    return Err(
+                        "O documento selecionado nao pertence ao workspace atual.".to_string()
+                    );
+                }
+            }
+
+            create_logical_document_view(connection, "documento", &document.table_name)?;
+            create_logical_document_view(connection, &document.file_name, &document.table_name)?;
+            Ok(Some(document.id))
+        }
+        "workspace" => {
+            let workspace_id = workspace_or_default(workspace_id);
+            ensure_workspace_exists(connection, &workspace_id)?;
+            let documents = list_document_records(connection, &workspace_id)?;
+            ensure_unambiguous_logical_names(&documents)?;
+
+            for document in &documents {
+                create_logical_document_view(
+                    connection,
+                    &document.file_name,
+                    &document.table_name,
+                )?;
+            }
+
+            Ok(None)
+        }
+        _ => Err("Contexto SQL invalido.".to_string()),
+    }
+}
+
+fn sql_source_info(
+    connection: &Connection,
+    document: DocumentRecord,
+) -> Result<SqlSourceInfo, String> {
+    let columns = get_columns(connection, &document.table_name)?;
+    let column_types = get_column_data_types(connection, &document.table_name, &columns)?;
+
+    Ok(SqlSourceInfo {
+        id: document.id,
+        name: document.file_name,
+        table_name: document.table_name,
+        columns,
+        column_types,
+    })
 }
 
 fn parse_import_performance(value: Option<String>) -> Option<ImportPerformanceSnapshot> {
@@ -3242,12 +3895,14 @@ fn import_xlsx_blocking(
         ensure_workspace_exists(&connection, &workspace_id)?;
 
         let duckdb_xlsx_start = Instant::now();
-        try_import_xlsx_direct_without_preopen(
+        let temp_xlsx_path = temp_xlsx_compatibility_path(&app, &document_id)?;
+        try_import_xlsx_direct_with_relationship_fallback(
             &connection,
             &file_path,
             &table_name,
             Some(&sheet_name),
             Some(&range),
+            &temp_xlsx_path,
         )
         .map_err(|error| {
             log_excel_import_error(
@@ -3256,7 +3911,9 @@ fn import_xlsx_blocking(
                 &error,
                 duckdb_xlsx_start.elapsed(),
             );
-            format!("Nao foi possivel importar a planilha \"{sheet_name}\".")
+            format!(
+                "Nao foi possivel importar esta planilha.\n\nO arquivo possui uma estrutura XLSX que nao pode ser lida pelo mecanismo de importacao.\n\nDetalhes tecnicos: {error}"
+            )
         })?;
         let duckdb_xlsx = duckdb_xlsx_start.elapsed();
         performance.duckdb += duckdb_xlsx;
@@ -4678,6 +5335,9 @@ fn rename_document(
     }
 
     let connection = open_database(&app)?;
+    let current = get_document_record(&connection, &document_id)?;
+    ensure_unique_document_name(&connection, &current.workspace_id, name, Some(&document_id))?;
+
     let updated = connection
         .execute(
             &format!(
@@ -5110,6 +5770,9 @@ fn get_table_window(
 fn get_sql_page(
     app: AppHandle,
     query: String,
+    context_mode: Option<String>,
+    workspace_id: Option<String>,
+    document_id: Option<String>,
     offset: usize,
     limit: usize,
     filters: Vec<ColumnFilter>,
@@ -5118,6 +5781,12 @@ fn get_sql_page(
 ) -> Result<TablePage, String> {
     let sql = validate_read_query(&query)?;
     let connection = open_database(&app)?;
+    prepare_sql_context(
+        &connection,
+        context_mode.as_deref().unwrap_or("document"),
+        workspace_id,
+        document_id,
+    )?;
     let columns = get_source_columns(&connection, &sql)?;
     get_page_from_source(
         &connection,
@@ -5136,6 +5805,9 @@ fn get_sql_page(
 fn get_sql_window(
     app: AppHandle,
     query: String,
+    context_mode: Option<String>,
+    workspace_id: Option<String>,
+    document_id: Option<String>,
     offset: usize,
     limit: usize,
     filters: Vec<ColumnFilter>,
@@ -5145,6 +5817,12 @@ fn get_sql_window(
 ) -> Result<TableWindow, String> {
     let sql = validate_read_query(&query)?;
     let connection = open_database(&app)?;
+    prepare_sql_context(
+        &connection,
+        context_mode.as_deref().unwrap_or("document"),
+        workspace_id,
+        document_id,
+    )?;
     let columns = get_source_columns(&connection, &sql)?;
     get_window_from_source(
         &connection,
@@ -5160,6 +5838,181 @@ fn get_sql_window(
         sort_direction,
         visible_columns,
     )
+}
+
+#[tauri::command]
+fn list_sql_sources(
+    app: AppHandle,
+    context_mode: Option<String>,
+    workspace_id: Option<String>,
+    document_id: Option<String>,
+) -> Result<Vec<SqlSourceInfo>, String> {
+    let connection = open_database(&app)?;
+    let context_mode = context_mode.unwrap_or_else(|| "document".to_string());
+
+    match context_mode.as_str() {
+        "document" => {
+            let document_id = document_id
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Selecione um documento para listar fontes SQL.".to_string())?;
+            let document = get_document_record(&connection, &document_id)?;
+            Ok(vec![sql_source_info(&connection, document)?])
+        }
+        "workspace" => {
+            let workspace_id = workspace_or_default(workspace_id);
+            ensure_workspace_exists(&connection, &workspace_id)?;
+            let documents = list_document_records(&connection, &workspace_id)?;
+            ensure_unambiguous_logical_names(&documents)?;
+            documents
+                .into_iter()
+                .map(|document| sql_source_info(&connection, document))
+                .collect()
+        }
+        _ => Err("Contexto SQL invalido.".to_string()),
+    }
+}
+
+#[tauri::command]
+fn save_sql_result_document(
+    app: AppHandle,
+    query: String,
+    name: String,
+    context_mode: Option<String>,
+    workspace_id: Option<String>,
+    source_document_id: Option<String>,
+) -> Result<DocumentInfo, String> {
+    let document_name = name.trim();
+
+    if document_name.is_empty() {
+        return Err("Digite um nome para o novo documento.".to_string());
+    }
+
+    let sql = validate_read_query(&query)?;
+    let connection = open_database(&app)?;
+    let workspace_id = workspace_or_default(workspace_id);
+    ensure_workspace_exists(&connection, &workspace_id)?;
+    let context_source_document_id = prepare_sql_context(
+        &connection,
+        context_mode.as_deref().unwrap_or("document"),
+        Some(workspace_id.clone()),
+        source_document_id.clone(),
+    )?;
+
+    let source_document_id = source_document_id
+        .or(context_source_document_id)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(document_id) = source_document_id.as_deref() {
+        get_document_table(&connection, document_id)?;
+    }
+
+    let document_id = new_document_id()?;
+    let table_name = format!("sql_rows_{}", document_id);
+    let imported_at = now_millis()?.to_string();
+    let start = Instant::now();
+
+    connection
+        .execute(
+            &format!(
+                "CREATE TABLE {} AS SELECT * FROM ({sql}) AS sql_result",
+                table_sql(&table_name)
+            ),
+            [],
+        )
+        .map_err(|error| format!("Nao foi possivel materializar o resultado SQL: {error}"))?;
+
+    let row_count = match connection.query_row(
+        &format!("SELECT COUNT(*) FROM {}", table_sql(&table_name)),
+        [],
+        |row| row.get::<_, i64>(0),
+    ) {
+        Ok(value) => value.max(0) as usize,
+        Err(error) => {
+            let _ = connection.execute(
+                &format!("DROP TABLE IF EXISTS {}", table_sql(&table_name)),
+                [],
+            );
+            return Err(format!("Nao foi possivel contar o resultado SQL: {error}"));
+        }
+    };
+
+    let columns = match get_columns(&connection, &table_name) {
+        Ok(columns) => columns,
+        Err(error) => {
+            let _ = connection.execute(
+                &format!("DROP TABLE IF EXISTS {}", table_sql(&table_name)),
+                [],
+            );
+            return Err(error);
+        }
+    };
+    let import_duration_ms = start.elapsed().as_millis();
+
+    if let Err(error) = register_document(
+        &connection,
+        &document_id,
+        &workspace_id,
+        document_name,
+        "Resultado SQL",
+        &table_name,
+        row_count,
+        columns.len(),
+        &imported_at,
+        Some(import_duration_ms),
+        None,
+        "sql",
+        document_name,
+        None,
+    ) {
+        let _ = connection.execute(
+            &format!("DROP TABLE IF EXISTS {}", table_sql(&table_name)),
+            [],
+        );
+        return Err(error);
+    }
+
+    let lineage_id = format!("lineage_{}", now_millis()?);
+    if let Err(error) = connection.execute(
+        &format!(
+            "INSERT INTO {} (id, source_document_id, result_document_id, sql, created_at)
+             VALUES (?, ?, ?, ?, ?)",
+            quoted_identifier(SQL_LINEAGE_TABLE)
+        ),
+        params![
+            lineage_id,
+            source_document_id.as_deref(),
+            document_id,
+            sql,
+            imported_at
+        ],
+    ) {
+        let _ = connection.execute(
+            &format!(
+                "DELETE FROM {} WHERE id = ?",
+                quoted_identifier(DOCUMENTS_TABLE)
+            ),
+            params![document_id],
+        );
+        let _ = connection.execute(
+            &format!("DROP TABLE IF EXISTS {}", table_sql(&table_name)),
+            [],
+        );
+        return Err(format!("Nao foi possivel registrar lineage SQL: {error}"));
+    }
+
+    Ok(DocumentInfo {
+        id: document_id,
+        workspace_id,
+        file_name: document_name.to_string(),
+        sheet_name: "Resultado SQL".to_string(),
+        table_name,
+        row_count,
+        column_count: columns.len(),
+        imported_at,
+        import_duration_ms: Some(import_duration_ms),
+        import_performance: None,
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -5190,10 +6043,12 @@ pub fn run() {
             rename_document_column,
             update_document_cell,
             export_document,
+            list_sql_sources,
             get_table_page,
             get_sql_page,
             get_table_window,
-            get_sql_window
+            get_sql_window,
+            save_sql_result_document
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar o aplicativo Tauri");
@@ -5510,6 +6365,17 @@ mod tests {
         zip.finish().unwrap();
     }
 
+    fn real_relationship_problem_xlsx_path() -> Option<PathBuf> {
+        let path =
+            PathBuf::from("/Users/valdineyfranca/Downloads/escolas_sem_porte20260820_16_43.xlsx");
+
+        if path.exists() {
+            Some(path)
+        } else {
+            None
+        }
+    }
+
     #[test]
     fn xlsx_direct_imports_selected_sheet_without_cell_preopen() {
         let mut path = std::env::temp_dir();
@@ -5551,6 +6417,149 @@ mod tests {
     }
 
     #[test]
+    fn xlsx_relationship_error_detector_is_specific() {
+        assert!(is_duckdb_xlsx_relationship_id_error(
+            "Binder Error: No sheets found in xlsx file (is the file corrupt?)"
+        ));
+        assert!(!is_duckdb_xlsx_relationship_id_error(
+            "Parser Error: syntax error at or near SELECT"
+        ));
+        assert!(!is_duckdb_xlsx_relationship_id_error(
+            "IO Error: No such file or directory"
+        ));
+        assert!(!is_duckdb_xlsx_relationship_id_error(
+            "Permission denied while opening file"
+        ));
+        assert!(!is_duckdb_xlsx_relationship_id_error(
+            "Sheet with name Missing was not found"
+        ));
+        assert!(!is_duckdb_xlsx_relationship_id_error(
+            "DuckDB nao conseguiu criar a tabela diretamente do XLSX: erro generico"
+        ));
+    }
+
+    #[test]
+    fn xlsx_compatible_file_imports_directly_without_relationship_normalization() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "valtron_direct_relationship_test_{}.xlsx",
+            now_millis().unwrap()
+        ));
+        write_test_multisheet_xlsx(&path);
+        assert!(!xlsx_needs_relationship_id_normalization(&path).unwrap());
+
+        let mut temp_path = std::env::temp_dir();
+        temp_path.push(format!(
+            "valtron_unused_relationship_temp_{}.xlsx",
+            now_millis().unwrap()
+        ));
+        let connection = Connection::open_in_memory().unwrap();
+        try_import_xlsx_direct_with_relationship_fallback(
+            &connection,
+            &path,
+            "direct_relationship_test",
+            Some("Primeira"),
+            None,
+            &temp_path,
+        )
+        .unwrap();
+
+        let rows = connection
+            .query_row("SELECT COUNT(*) FROM direct_relationship_test", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 1);
+        assert!(!temp_path.exists());
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn xlsx_relationship_normalization_fallback_imports_problematic_fixture() {
+        let Some(path) = real_relationship_problem_xlsx_path() else {
+            eprintln!("fixture XLSX real ausente; teste de fallback ignorado");
+            return;
+        };
+        let original_bytes = fs::read(&path).unwrap();
+        assert!(xlsx_needs_relationship_id_normalization(&path).unwrap());
+
+        let connection = Connection::open_in_memory().unwrap();
+        let direct_error = try_import_xlsx_direct_without_preopen(
+            &connection,
+            &path,
+            "relationship_gap_direct",
+            Some("Sheet0"),
+            Some("A1:Z"),
+        )
+        .unwrap_err();
+        assert!(is_duckdb_xlsx_relationship_id_error(&direct_error));
+
+        let mut temp_path = std::env::temp_dir();
+        temp_path.push(format!(
+            "valtron_relationship_gap_temp_{}.xlsx",
+            now_millis().unwrap()
+        ));
+        try_import_xlsx_direct_with_relationship_fallback(
+            &connection,
+            &path,
+            "relationship_gap_imported",
+            Some("Sheet0"),
+            Some("A1:Z"),
+            &temp_path,
+        )
+        .unwrap();
+
+        let rows = connection
+            .query_row(
+                "SELECT COUNT(*) FROM relationship_gap_imported",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let columns = get_columns(&connection, "relationship_gap_imported").unwrap();
+        let first_id = connection
+            .query_row(
+                "SELECT id FROM relationship_gap_imported LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+
+        assert_eq!(rows, 629);
+        assert_eq!(columns.len(), 26);
+        assert_eq!(columns[0], "id");
+        assert_eq!(first_id, "3395.0");
+        assert_eq!(fs::read(&path).unwrap(), original_bytes);
+        assert!(!temp_path.exists());
+    }
+
+    #[test]
+    fn xlsx_relationship_fallback_failure_is_propagated_without_partial_table() {
+        let Some(path) = real_relationship_problem_xlsx_path() else {
+            eprintln!("fixture XLSX real ausente; teste de falha do fallback ignorado");
+            return;
+        };
+
+        let mut temp_path = std::env::temp_dir();
+        temp_path.push("valtron_missing_parent");
+        temp_path.push(format!("compat_{}.xlsx", now_millis().unwrap()));
+        let connection = Connection::open_in_memory().unwrap();
+        let error = try_import_xlsx_direct_with_relationship_fallback(
+            &connection,
+            &path,
+            "relationship_gap_failed",
+            Some("Sheet0"),
+            Some("A1:Z"),
+            &temp_path,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Nao foi possivel criar o XLSX temporario"));
+        assert!(get_columns(&connection, "relationship_gap_failed").is_err());
+        assert!(!temp_path.exists());
+    }
+
+    #[test]
     fn ooxml_parser_accepts_prefixed_workbook_and_worksheet_elements() {
         let mut path = std::env::temp_dir();
         path.push(format!(
@@ -5571,6 +6580,47 @@ mod tests {
         let rows = scan_sheet_header_rows(&path, "Clientes").unwrap();
         assert_eq!(rows[0].cells.get(&0).unwrap(), "ID");
         assert_eq!(rows[1].cells.get(&1).unwrap(), "Ana");
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn ooxml_header_scan_treats_inline_str_numeric_boolean_and_str_as_filled() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "valtron_inline_str_scan_test_{}.xlsx",
+            now_millis().unwrap()
+        ));
+        let sheet = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="inlineStr"><is><t>nome</t></is></c>
+      <c r="B1" t="inlineStr"><is><t>codigo</t></is></c>
+      <c r="C1" t="inlineStr"><is><t>ativo</t></is></c>
+      <c r="D1" t="inlineStr"><is><t>observacao</t></is></c>
+    </row>
+    <row r="2">
+      <c r="A2" t="inlineStr"><is><t>Ana</t></is></c>
+      <c r="B2"><v>123</v></c>
+      <c r="C2" t="b"><v>1</v></c>
+      <c r="D2" t="str"><v>texto direto</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#;
+        write_test_single_sheet_xlsx(&path, "Sheet0", sheet);
+
+        let rows = scan_sheet_header_rows(&path, "Sheet0").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].cells.get(&0).unwrap(), "nome");
+        assert_eq!(rows[1].cells.get(&0).unwrap(), "Ana");
+        assert_eq!(rows[1].cells.get(&1).unwrap(), "123");
+        assert_eq!(rows[1].cells.get(&2).unwrap(), "1");
+        assert_eq!(rows[1].cells.get(&3).unwrap(), "texto direto");
+
+        let detection = detect_excel_header(&path, "Sheet0").unwrap();
+        assert_eq!(detection.header_row, 1);
+        assert_eq!(detection.column_count, 4);
+
         fs::remove_file(path).ok();
     }
 
@@ -5708,6 +6758,207 @@ mod tests {
         let detection = detect_header_from_rows(&rows).unwrap();
         assert_eq!(detection.header_row, 2);
         assert_eq!(detection.column_count, 1);
+    }
+
+    #[test]
+    fn sql_document_context_resolves_documento_and_logical_name() {
+        let connection = Connection::open_in_memory().unwrap();
+        init_database(&connection).unwrap();
+        connection
+            .execute(
+                "CREATE TABLE physical_pagamentos (\"MUNICÍPIO\" VARCHAR, \"TOTAL PAGO\" VARCHAR)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO physical_pagamentos VALUES ('Aiquara', '12000')",
+                [],
+            )
+            .unwrap();
+        register_document(
+            &connection,
+            "doc_pagamentos",
+            DEFAULT_WORKSPACE_ID,
+            "ADIMPLENTES POR PAGAMENTO",
+            "Planilha1",
+            "physical_pagamentos",
+            1,
+            2,
+            "1",
+            None,
+            None,
+            "test",
+            "pagamentos.xlsx",
+            Some("Planilha1"),
+        )
+        .unwrap();
+
+        prepare_sql_context(
+            &connection,
+            "document",
+            Some(DEFAULT_WORKSPACE_ID.to_string()),
+            Some("doc_pagamentos".to_string()),
+        )
+        .unwrap();
+
+        let from_alias = connection
+            .query_row(
+                "SELECT COUNT(*) FROM documento WHERE \"MUNICÍPIO\" = 'Aiquara'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let from_logical_name = connection
+            .query_row(
+                "SELECT COUNT(*) FROM \"ADIMPLENTES POR PAGAMENTO\" WHERE \"TOTAL PAGO\" = '12000'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+
+        assert_eq!(from_alias, 1);
+        assert_eq!(from_logical_name, 1);
+    }
+
+    #[test]
+    fn sql_workspace_context_resolves_document_names_for_join() {
+        let connection = Connection::open_in_memory().unwrap();
+        init_database(&connection).unwrap();
+        connection
+            .execute(
+                "CREATE TABLE physical_alunos (matricula VARCHAR, nome VARCHAR)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "CREATE TABLE physical_notas (matricula VARCHAR, nota VARCHAR)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute("INSERT INTO physical_alunos VALUES ('001', 'Ana')", [])
+            .unwrap();
+        connection
+            .execute("INSERT INTO physical_notas VALUES ('001', '10')", [])
+            .unwrap();
+        register_document(
+            &connection,
+            "doc_alunos",
+            DEFAULT_WORKSPACE_ID,
+            "alunos",
+            "Planilha1",
+            "physical_alunos",
+            1,
+            2,
+            "1",
+            None,
+            None,
+            "test",
+            "alunos.xlsx",
+            Some("Planilha1"),
+        )
+        .unwrap();
+        register_document(
+            &connection,
+            "doc_notas",
+            DEFAULT_WORKSPACE_ID,
+            "notas",
+            "Planilha1",
+            "physical_notas",
+            1,
+            2,
+            "2",
+            None,
+            None,
+            "test",
+            "notas.xlsx",
+            Some("Planilha1"),
+        )
+        .unwrap();
+
+        prepare_sql_context(
+            &connection,
+            "workspace",
+            Some(DEFAULT_WORKSPACE_ID.to_string()),
+            None,
+        )
+        .unwrap();
+
+        let joined = connection
+            .query_row(
+                "SELECT a.nome || ':' || n.nota FROM alunos a JOIN notas n ON n.matricula = a.matricula",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+
+        assert_eq!(joined, "Ana:10");
+    }
+
+    #[test]
+    fn sql_workspace_context_rejects_duplicate_logical_names() {
+        let connection = Connection::open_in_memory().unwrap();
+        init_database(&connection).unwrap();
+        connection
+            .execute("CREATE TABLE duplicate_a (id VARCHAR)", [])
+            .unwrap();
+        connection
+            .execute("CREATE TABLE duplicate_b (id VARCHAR)", [])
+            .unwrap();
+        register_document(
+            &connection,
+            "doc_duplicate_a",
+            DEFAULT_WORKSPACE_ID,
+            "Duplicado",
+            "Planilha1",
+            "duplicate_a",
+            0,
+            1,
+            "1",
+            None,
+            None,
+            "test",
+            "a.xlsx",
+            Some("Planilha1"),
+        )
+        .unwrap();
+
+        connection
+            .execute(
+                &format!(
+                    "INSERT INTO {} (
+                        id, workspace_id, file_name, sheet_name, table_name, row_count,
+                        column_count, imported_at, source_type, source_file_name, source_sheet_name
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    quoted_identifier(DOCUMENTS_TABLE)
+                ),
+                params![
+                    "doc_duplicate_b",
+                    DEFAULT_WORKSPACE_ID,
+                    "Duplicado",
+                    "Planilha1",
+                    "duplicate_b",
+                    0_i64,
+                    1_i64,
+                    "2",
+                    "test",
+                    "b.xlsx",
+                    "Planilha1"
+                ],
+            )
+            .unwrap();
+
+        let error = prepare_sql_context(
+            &connection,
+            "workspace",
+            Some(DEFAULT_WORKSPACE_ID.to_string()),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("nome duplicado"));
     }
 
     #[test]
